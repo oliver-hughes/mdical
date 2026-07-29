@@ -72,6 +72,11 @@ step() { printf '\n== %s\n' "$*"; }
 warn() { printf '%s  WARN %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; degraded=1; }
 die()  { printf '%s  FAIL %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; exit 1; }
 
+# Everything expected to fail goes through `die`, which says why. This is for the
+# rest: `set -e` otherwise exits with nothing in the journal to work from, at 3am,
+# and you find out a week later from the healthcheck.
+trap 'printf "FAIL run.sh died at line %s with status %s\n" "$LINENO" "$?" >&2' ERR
+
 for tool in git luajit vdirsyncer; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done

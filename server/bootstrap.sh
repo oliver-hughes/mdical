@@ -17,6 +17,12 @@
 
 set -euo pipefail
 
+# `set -e` exits silently, which in a script this long is the difference between a
+# five-second fix and an evening. Say which line, and what the status was.
+trap 'echo "
+bootstrap.sh: FAILED at line $LINENO with status $? - nothing after this ran.
+Fix it and run bootstrap.sh again; it is idempotent and picks up where it stopped." >&2' ERR
+
 MDICAL="$(cd "$(dirname "$0")/.." && pwd)"
 CAL_ROOT=/opt/cal
 CAL_USER="${CAL_USER:-hugheso}"
@@ -77,7 +83,17 @@ install -d -m 0755 /etc/radicale
 step "the CalDAV password"
 if [ ! -s "$CAL_ROOT/secrets/caldav-password" ]; then
   # Typed into the phone once, then never again, so length beats memorability.
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 > "$CAL_ROOT/secrets/caldav-password"
+  #
+  # A **bounded** read from urandom, not `tr < /dev/urandom | head -c 32`. That
+  # reads an infinite source into a consumer that exits early, so `tr` takes
+  # SIGPIPE and the pipeline returns 141 - which under `set -o pipefail` killed
+  # this script stone dead with no message at all. 1 KiB of random bytes yields
+  # around 248 alphanumerics, so 32 is never in doubt, and `cut` reads to EOF so
+  # nothing gets a broken pipe. LC_ALL=C because BSD `tr` rejects random bytes as
+  # an illegal multibyte sequence.
+  password="$(head -c 1024 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9' | cut -c1-32)"
+  [ ${#password} -eq 32 ] || { echo "could not generate a password (got ${#password} chars)" >&2; exit 1; }
+  printf '%s' "$password" > "$CAL_ROOT/secrets/caldav-password"
   echo "generated a new one"
 else
   echo "already there, leaving it alone"
