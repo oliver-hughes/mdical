@@ -248,6 +248,94 @@ check(line_after("- [ ] bad cookie", function()
 end) == "- [ ] bad cookie", "an unparseable cookie changes nothing")
 check(notified and notified:match("unrecognised"), "and says why", notified)
 
+print("\n== typed text is used when nothing matched ==")
+-- The telescope path hands back (nil, "what you typed") when the filter matched
+-- nothing. Simulate that directly: `--clean` has no telescope, so the real
+-- picker here is the vim.ui.select fallback covered above.
+local pickmod = require("mdical.nvim.pick")
+local real_select = pickmod.select
+check(pickmod.has_telescope() == false, "no telescope under --clean, so the fallback is what ran above")
+
+--- Each argument is one stage: a string = typed text, {label=} = a highlighted
+--- entry, "<cancel>" = escaped.
+local function typing(...)
+  local list = { ... }
+  local stage = 0
+  pickmod.select = function(opts)
+    stage = stage + 1
+    local a = list[math.min(stage, #list)]
+    if a == "<cancel>" then
+      return opts.on_choice(nil, nil)
+    end
+    if type(a) == "table" then
+      for _, e in ipairs(opts.entries) do
+        if e.label == a.label then
+          return opts.on_choice(e, "")
+        end
+      end
+      error(("stage %d: no entry labelled %s"):format(stage, a.label))
+    end
+    return opts.on_choice(nil, a)
+  end
+end
+
+typing("2026-12-25")
+check(line_after("- [ ] christmas prep", function()
+  insert.insert({})
+end) == "- [ ] christmas prep <2026-12-25 Fri>", "a typed date, with no matching preset")
+
+typing("2026-12-25", "08:00", "+2d")
+check(line_after("- [ ] pay rent", function()
+  insert.build({})
+end) == "- [ ] pay rent <2026-12-25 Fri 08:00 +2d>", "typed date, typed time, typed cookie")
+
+typing("2026-12-25 08:00 +1m")
+check(line_after("- [ ] all at once", function()
+  insert.insert({})
+end) == "- [ ] all at once <2026-12-25 Fri 08:00 +1m>", "a whole marker typed at the date stage")
+
+typing({ label = "today" }, "0800", "++2w")
+check(line_after("- [ ] mixed", function()
+  insert.build({})
+end) == ("- [ ] mixed <%s 08:00 ++2w>"):format(today), "a preset, then two typed answers")
+
+typing({ label = "today" }, { label = "9am" }, { label = "none" })
+check(line_after("- [ ] presets", function()
+  insert.build({})
+end) == ("- [ ] presets <%s 09:00>"):format(today), "a highlighted entry still wins")
+
+notified = nil
+typing("2026-12-25", "half nine", "none")
+check(line_after("- [ ] bad time", function()
+  insert.build({})
+end) == "- [ ] bad time", "an unusable typed time changes nothing")
+check(notified and notified:match("not a time"), "and says so", notified)
+
+notified = nil
+typing("2026-12-25", { label = "none" }, "+2z")
+check(line_after("- [ ] bad cookie", function()
+  insert.build({})
+end) == "- [ ] bad cookie", "an unusable typed cookie changes nothing")
+check(notified and notified:match("unrecognised"), "and says why", notified)
+
+notified = nil
+typing("next tuesday")
+check(line_after("- [ ] bad date", function()
+  insert.insert({})
+end) == "- [ ] bad date", "prose at the date stage changes nothing")
+check(notified and notified:match("is not a date"), "and says so", notified)
+
+for stage = 1, 3 do
+  local list = { "2026-12-25", "08:00", "+1m" }
+  list[stage] = "<cancel>"
+  typing(list[1], list[2], list[3])
+  check(line_after("- [ ] untouched", function()
+    insert.build({})
+  end) == "- [ ] untouched", "escaping at stage " .. stage .. " changes nothing")
+end
+
+pickmod.select = real_select
+
 print("\n== build: cancelling at any stage ==")
 for stage = 1, 3 do
   local seen = 0

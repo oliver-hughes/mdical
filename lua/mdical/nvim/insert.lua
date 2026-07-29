@@ -14,6 +14,7 @@ local fmt = require("mdical.fmt")
 local grammar = require("mdical.grammar")
 local date = require("mdical.date")
 local edit = require("mdical.edit")
+local pick = require("mdical.nvim.pick")
 local dates = require("mdical.nvim.dates")
 local times = require("mdical.nvim.times")
 local cookies = require("mdical.nvim.cookies")
@@ -68,75 +69,110 @@ local function timestamp(d, time_text, cookie_text)
 end
 
 --------------------------------------------------------------------- prompts
+--
+-- Each stage takes a list of presets *and* whatever was typed, and resolves them
+-- in this order:
+--
+--   1. typed text that is itself a valid answer  -> use it
+--   2. otherwise, the highlighted preset         -> use that
+--   3. otherwise                                 -> say why it was no good
+--
+-- Typed text has to win outright rather than only when nothing matched, because
+-- fuzzy matching is too loose to be the arbiter: `+2d` matches the preset
+-- `+1y -21d` on a subsequence, so "did anything match" would silently discard
+-- what was typed. Meanwhile `today`, `sat` and `eom` are not valid answers, so
+-- filtering to a preset and confirming still works exactly as expected.
 
---- @param on_date fun(d: table)  not called if cancelled
+local function trim(s)
+  return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+--- Shared resolution. `check(typed)` returns a value, or nil plus a reason.
+--- @param use fun(value: any)
+--- @param from_entry fun(entry: table): any
+local function resolve(entry, typed, check, use, from_entry)
+  if typed == nil then
+    return -- cancelled
+  end
+  typed = trim(typed)
+  if typed ~= "" then
+    local value, err = check(typed)
+    if value ~= nil then
+      return use(value)
+    end
+    if entry then
+      return use(from_entry(entry))
+    end
+    vim.notify("mdical: " .. (err or ("`%s` is no good here"):format(typed)), vim.log.levels.ERROR)
+    return
+  end
+  if entry then
+    return use(from_entry(entry))
+  end
+end
+
+--- @param on_date fun(d: table, ts: table|nil)  not called if cancelled
 local function ask_date(prompt, on_date)
   local entries = dates.entries()
   entries[#entries + 1] = { label = "date…", custom = true }
-  vim.ui.select(entries, { prompt = prompt, format_item = dates.format, kind = "mdical.date" }, function(choice)
-    if not choice then
-      return
-    end
-    if not choice.custom then
-      return on_date(choice.date, nil)
-    end
-    vim.ui.input({ prompt = "date [day] [time] [cookies]: " }, function(input)
-      if not input or input:match("^%s*$") then
-        return
-      end
-      local ts, err = grammar.parse_body((input:gsub("^%s+", ""):gsub("%s+$", "")), true)
-      if not ts or not ts.date then
-        vim.notify("mdical: " .. (err and err.msg or "not a date"), vim.log.levels.ERROR)
-        return
-      end
-      -- free text may carry the whole thing, so hand the timestamp back too
-      on_date(ts.date, ts)
-    end)
-  end)
+  pick.select({
+    prompt = prompt,
+    entries = entries,
+    format = dates.format,
+    free_prompt = "date [day] [time] [cookies]: ",
+    on_choice = function(entry, typed)
+      resolve(entry, typed, function(text)
+        local ts, err = grammar.parse_body(text, true)
+        if not ts or not ts.date then
+          return nil, ("`%s` is not a date - %s"):format(text, err and err.msg or "expected YYYY-MM-DD")
+        end
+        -- typed text may carry a time and cookies as well as the date
+        return { date = ts.date, ts = ts }
+      end, function(chosen)
+        on_date(chosen.date, chosen.ts)
+      end, function(e)
+        return { date = e.date }
+      end)
+    end,
+  })
 end
 
 local function ask_time(on_time)
-  vim.ui.select(times.presets, { prompt = "Time", format_item = times.format, kind = "mdical.time" },
-    function(choice)
-      if not choice then
-        return
-      end
-      if choice.none then
-        return on_time(nil)
-      end
-      if choice.value then
-        return on_time(choice.value)
-      end
-      vim.ui.input({ prompt = "time (9, 9am, 930, midday, 9am-5pm): " }, function(input)
-        if not input or input:match("^%s*$") then
-          return on_time(nil)
-        end
-        local normalised = times.normalise(input)
+  pick.select({
+    prompt = "Time",
+    entries = times.presets,
+    format = times.format,
+    free_prompt = "time (9, 9am, 930, midday, 9am-5pm): ",
+    on_choice = function(entry, typed)
+      resolve(entry, typed, function(text)
+        local normalised = times.normalise(text)
         if not normalised then
-          vim.notify(("mdical: `%s` is not a time"):format(input), vim.log.levels.ERROR)
-          return
+          return nil, ("`%s` is not a time"):format(text)
         end
-        on_time(normalised)
+        return normalised
+      end, function(value)
+        on_time(value ~= "" and value or nil)
+      end, function(e)
+        return e.value or "" -- the `none` entry
       end)
-    end)
+    end,
+  })
 end
 
 local function ask_cookies(on_cookies)
-  vim.ui.select(cookies.presets, { prompt = "Repeat / warn", format_item = cookies.format, kind = "mdical.cookies" },
-    function(choice)
-      if not choice then
-        return
-      end
-      if not choice.custom then
-        return on_cookies(choice.cookies)
-      end
-      vim.ui.input({ prompt = "cookies ([+|++|.+]N[dwmy] and/or -N[dwmy]): " }, function(input)
-        if not input or input:match("^%s*$") then
-          return on_cookies(nil)
-        end
-        on_cookies((input:gsub("^%s+", ""):gsub("%s+$", "")))
+  pick.select({
+    prompt = "Repeat / warn",
+    entries = cookies.presets,
+    format = cookies.format,
+    free_prompt = "cookies ([+|++|.+]N[dwmy] and/or -N[dwmy]): ",
+    on_choice = function(entry, typed)
+      resolve(entry, typed, cookies.valid, function(value)
+        on_cookies(value ~= "" and value or nil)
+      end, function(e)
+        return e.cookies or "" -- the `none` entry
       end)
-    end)
+    end,
+  })
 end
 
 ----------------------------------------------------------------------- flows

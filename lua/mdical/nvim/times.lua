@@ -15,14 +15,11 @@ M.presets = {
   { label = "midday", value = "12:00" },
   { label = "5pm", value = "17:00" },
   { label = "9pm", value = "21:00" },
-  { label = "time…", custom = true },
+  { label = "time…", custom = true, hint = "9, 930, 9.30, 9am, midday, 9am-5pm" },
 }
 
 function M.format(entry)
-  if not entry.value then
-    return entry.label
-  end
-  return ("%-9s %s"):format(entry.label, entry.value)
+  return (("%-9s %s"):format(entry.label, entry.value or entry.hint or ""):gsub("%s+$", ""))
 end
 
 local WORDS = { midday = "12:00", noon = "12:00", midnight = "00:00" }

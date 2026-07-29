@@ -58,30 +58,50 @@ rather than appending a second timestamp and creating an error. `build` is the
 opposite: it replaces the timestamp outright, so choosing *none* at the time or
 repeat stage means none.
 
-Every prompt is a `vim.ui.select`, so the keys and the look are your own
-picker's - fuzzy filtering included, which is the quick way to reach `end of
-month`. Confirm keys come from there too; if you want `<C-y>` as well as `<CR>`,
-that belongs in your picker's config rather than here.
+### Typing beats picking
+
+Every stage takes a list of presets **and** whatever you typed into the prompt,
+and resolves them in this order:
+
+1. typed text that is itself a valid answer wins
+2. otherwise the highlighted preset
+3. otherwise it says what was wrong with what you typed
+
+So `08:00` at the time stage, `+2d` at the repeat stage and `2026-12-25` at the
+date stage all just work, without hunting for a "type it yourself" entry. Words
+like `today`, `sat` and `eom` are *not* valid answers, so filtering down to a
+preset and confirming behaves exactly as you'd expect.
+
+Typed text has to win outright rather than only when nothing matched, because
+fuzzy matching is too loose to arbitrate: `+2d` matches the preset `+1y -21d` on
+a subsequence, so "did anything match?" would silently throw away what you typed.
+
+Where telescope is present it is driven directly, because that is the only way to
+read the prompt text back - `vim.ui.select` discards it. That also means the keys
+and the look are your own telescope config's, fuzzy sorter and confirm keys
+included, so `<C-y>` works if you have bound it there. Without telescope it falls
+back to `vim.ui.select` plus a `type it…` entry: the same behaviour, one more
+keystroke.
 
 ### The date stage
 
 Sixteen entries: today, tomorrow, the next six days by name, 1w/2w/3w, 1m/2m/3m,
-end of month, 1y - each showing the date and day name it resolves to - then
-`date…` for free text. Free text goes through the timestamp grammar itself, so
-`2026-08-01 14:00 +1m` typed by hand works.
+end of month, 1y - each showing the date and day name it resolves to. Anything
+you type goes through the timestamp grammar itself, so `2026-08-01 14:00 +1m`
+works and lands the whole marker in one go.
 
 ### The time stage
 
-`none`, five presets (7am, 9am, midday, 5pm, 9pm), then `time…`, which is
+`none` and five presets (7am, 9am, midday, 5pm, 9pm). What you type is
 forgiving: `9`, `930`, `9.30`, `9am`, `midday`, `1745` and `9am-5pm` all become
 something the grammar accepts. Anything that doesn't is refused before it can be
 written into a note.
 
 ### The repeat stage
 
-All three of org's repeater flavours with what they actually mean, warnings on
-their own and alongside a repeater, and `cookies…` for the rest. It doubles as
-the syntax reminder for the `+1m` / `++1m` / `.+1m` distinction:
+All three of org's repeater flavours with what they actually mean, and warnings
+both on their own and alongside a repeater. It doubles as the syntax reminder for
+the `+1m` / `++1m` / `.+1m` distinction:
 
 ```
 +1m        every month - clamps, so the 31st becomes the 28th in february
@@ -170,6 +190,10 @@ refusing to publish it.
 ```sh
 luajit tests/run.lua                              # the core
 nvim --headless --clean -l tests/nvim_smoke.lua    # the editor layer
+
+# the telescope path, driven for real. Needs telescope on the runtimepath, so it
+# skips itself without one and is not part of CI.
+nvim --headless some.md -c 'sleep 900m' -c 'luafile tests/telescope_drive.lua'
 ```
 
 No plenary and no neovim for the first one: the same suite runs on a laptop, in CI, and on the box

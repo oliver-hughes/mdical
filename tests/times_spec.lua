@@ -10,7 +10,7 @@ describe("nvim.times presets", function()
 
   it("shows the friendly name and what it means", function()
     eq(times.format({ label = "9am", value = "09:00" }), "9am       09:00", "preset")
-    eq(times.format({ label = "none", none = true }), "none", "none")
+    eq(times.format({ label = "none", none = true }), "none", "no trailing padding")
   end)
 
   it("only offers times the grammar accepts", function()

@@ -37,4 +37,20 @@ function M.format(entry)
   return ("%-10s %s"):format(entry.label, entry.hint or "")
 end
 
+--- Is `text` a cookie or two, and nothing else? Validated by parsing it as part
+--- of a throwaway timestamp, so the presets and hand-typed text are checked by
+--- exactly the code that will later have to read them back out of a note.
+--- @return string|nil cookies, string|nil err
+function M.valid(text)
+  local grammar = require("mdical.grammar")
+  local ts, err = grammar.parse_body("2026-01-01 " .. tostring(text or ""), true)
+  if not ts then
+    return nil, err and err.msg or "not a repeater"
+  end
+  if not (ts.repeater or ts.warn) or ts.time or ts.dayname then
+    return nil, ("`%s` is not a repeater or a warning"):format(text)
+  end
+  return text
+end
+
 return M
