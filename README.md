@@ -64,9 +64,13 @@ require("mdical").setup {
   lint = {
     enabled = true,
     debounce = 200,             -- ms after a change before re-linting
+    disable = {},               -- codes to stop showing, e.g. { "done-without-closed" }
   },
 }
 ```
+
+`lint.disable` is editor-only and has no equivalent in the build, so hiding a
+code changes what you are shown and never what gets published.
 
 Scope decides which *notes* are read; promotion decides which *lines* within
 them are markers. No scope setting can make a bare `- [ ]` into a task - that is

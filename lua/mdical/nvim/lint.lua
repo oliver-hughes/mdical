@@ -39,21 +39,30 @@ function M.buffer(bufnr, cfg)
   end
 
   local sev = severities()
+  -- Editor-only: the build has no equivalent, deliberately. Silencing a code
+  -- here changes what you are shown, never what gets published.
+  local off = {}
+  for _, code in ipairs((cfg and cfg.lint and cfg.lint.disable) or {}) do
+    off[code] = true
+  end
+
   local out = {}
   for lnum, p in ipairs(parse.document(lines)) do
     if p then
       for _, d in ipairs(p.diagnostics) do
-        out[#out + 1] = {
-          lnum = lnum - 1,
-          col = d.col - 1,
-          end_lnum = lnum - 1,
-          end_col = d.end_col, -- 1-based inclusive -> 0-based exclusive
-          severity = sev[d.severity],
-          message = d.msg,
-          code = d.code,
-          source = "mdical",
-          user_data = { fixit = d.fixit },
-        }
+        if not off[d.code] then
+          out[#out + 1] = {
+            lnum = lnum - 1,
+            col = d.col - 1,
+            end_lnum = lnum - 1,
+            end_col = d.end_col, -- 1-based inclusive -> 0-based exclusive
+            severity = sev[d.severity],
+            message = d.msg,
+            code = d.code,
+            source = "mdical",
+            user_data = { fixit = d.fixit },
+          }
+        end
       end
     end
   end

@@ -16,6 +16,10 @@ M.config = {
   lint = {
     enabled = true,
     debounce = 200, -- ms after a change before re-linting
+    --- Codes to stop showing, e.g. { "done-without-closed" }. Editor-only:
+    --- the build has no equivalent, so this can never silence a line's refusal
+    --- to publish.
+    disable = {},
   },
 }
 

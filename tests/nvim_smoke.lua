@@ -63,6 +63,12 @@ local line4 = vim.api.nvim_buf_get_lines(buf, 3, 4, false)[1]
 check(line4:sub(by_line[3].col + 1, by_line[3].end_col) == "<2026-09-01 Fri>", "span maps onto the text",
   line4:sub(by_line[3].col + 1, by_line[3].end_col))
 
+print("\n== lint: disabling a code ==")
+lint.buffer(buf, { scope = cfg.scope, lint = { disable = { "org-priority" } } })
+local kept = vim.diagnostic.get(buf, { namespace = lint.namespace })
+check(#kept == 1 and kept[1].code == "dayname-mismatch", "a disabled code is not shown", #kept)
+lint.buffer(buf, cfg)
+
 print("\n== lint respects scope ==")
 local meta = buffer("/tmp/mdical-meta.md", {
   "---",
