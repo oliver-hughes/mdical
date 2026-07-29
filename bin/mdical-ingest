@@ -1,0 +1,197 @@
+#!/usr/bin/env luajit
+--- Bring completions back from the vdir into markdown.
+---
+---   mdical-ingest --vault /opt/cal/vault --vdir /opt/cal/vdir
+---   mdical-ingest --vault ~/vaults/brain --vdir /opt/cal/vdir --dry-run --verbose
+---
+--- Steps 3 and 4 of the nightly run. It reads the tasks collection, which
+--- `vdirsyncer` has just filled with whatever the phone did, and writes the
+--- completions it finds back into the notes.
+---
+--- **This is the only thing in the pipeline that writes to your notes.** Three
+--- rules follow from that:
+---
+--- Every write is a temp file plus a rename, so a note is never half-written.
+---
+--- Only the bytes of the changed lines change. Line endings, indentation and the
+--- presence or absence of a trailing newline are preserved exactly, because a
+--- rewrite that normalised them would show up as a whole-file diff and bury the
+--- one line that actually moved.
+---
+--- A line is only replaced if it still reads exactly as it did when it was
+--- planned. It always should - the plan was made moments ago from the same
+--- bytes - and if it ever does not, something else is editing the vault and the
+--- right move is to write nothing.
+---
+--- It does not touch git and does not run vdirsyncer; `run.sh` sequences those.
+--- The commit must land *before* the rebuilt vdir drops the completed resource,
+--- or a half-failure re-publishes the task as outstanding and you tick it twice.
+
+local here = arg[0]:match("^(.*)/bin/[^/]+$") or "."
+package.path = here .. "/lua/?.lua;" .. here .. "/lua/?/init.lua;" .. package.path
+
+local ratchet = require("mdical.ratchet")
+local scan = require("mdical.scan")
+local state = require("mdical.state")
+local vdir = require("mdical.vdir")
+
+local opts = {
+  vault = nil,
+  vdir = nil,
+  state = nil,
+  tasks_dir = "cal-tasks",
+  dry_run = false,
+  verbose = false,
+}
+
+local function usage(message)
+  if message then
+    io.stderr:write("mdical-ingest: " .. message .. "\n\n")
+  end
+  io.stderr:write([[
+usage: mdical-ingest --vault DIR --vdir DIR [options]
+
+  --vault DIR   the notes checkout to write into
+  --vdir DIR    where cal-tasks/ lives
+  --state DIR   where to leave last-ingest.lua (default: --vdir/../state)
+  --dry-run     report what would change, write nothing
+  --verbose     show every line before and after, and everything skipped
+]])
+  os.exit(message and 2 or 0)
+end
+
+local i = 1
+while i <= #arg do
+  local a = arg[i]
+  local function value()
+    i = i + 1
+    return arg[i] or usage("missing value for " .. a)
+  end
+  if a == "--vault" then
+    opts.vault = value()
+  elseif a == "--vdir" then
+    opts.vdir = value()
+  elseif a == "--state" then
+    opts.state = value()
+  elseif a == "--dry-run" then
+    opts.dry_run = true
+  elseif a == "--verbose" then
+    opts.verbose = true
+  elseif a == "-h" or a == "--help" then
+    usage()
+  else
+    usage("unknown argument: " .. a)
+  end
+  i = i + 1
+end
+
+if not opts.vault then
+  usage("--vault is required")
+end
+if not opts.vdir then
+  usage("--vdir is required")
+end
+opts.state = opts.state or (opts.vdir .. "/../state")
+
+local function say(fmt, ...)
+  print(select("#", ...) > 0 and fmt:format(...) or fmt)
+end
+
+------------------------------------------------------------------------- read
+
+local resources = {}
+for id, path in pairs(vdir.existing(opts.vdir .. "/" .. opts.tasks_dir)) do
+  local text = vdir.read(path)
+  if text then
+    resources[#resources + 1] = { path = path, id = id, text = text }
+  end
+end
+
+local completions = ratchet.completions(resources)
+local vault = scan.vault(opts.vault, nil)
+local plan = ratchet.plan(vault.markers, completions)
+
+say("%d task resources, %d completed", #resources, #completions)
+if plan.unknown > 0 then
+  say("%d completed on the phone and not ours - left alone", plan.unknown)
+end
+if plan.gone > 0 then
+  say("%d completed but no longer in markdown - nothing to do", plan.gone)
+end
+if plan.duplicates > 0 then
+  say("%d markers collapsed onto a resource another marker already owns", plan.duplicates)
+end
+for _, s in ipairs(plan.skipped) do
+  say("  skipped  %s: %s", s.summary, s.why)
+end
+
+--- Hand the build a credit for the markers this run stopped promoting.
+---
+--- Without it a productive day is indistinguishable from a broken parser: the
+--- count-drop gate sees markers fall and refuses to publish. Written even when it
+--- is zero, so a stale credit cannot be spent by a later build, and consumed
+--- exactly once - the build clears it after reading.
+if not opts.dry_run then
+  vdir.ensure(opts.state)
+  local ok, err = state.write(opts.state .. "/last-ingest.lua",
+    { version = 1, credit = { markers = plan.closed } })
+  if not ok then
+    io.stderr:write(("mdical-ingest: could not record the gate credit: %s\n"):format(tostring(err)))
+  end
+end
+
+if #plan.changes == 0 then
+  say("nothing to write")
+  os.exit(0)
+end
+
+------------------------------------------------------------------------ write
+
+local by_path, order = {}, {}
+for _, change in ipairs(plan.changes) do
+  if not by_path[change.path] then
+    by_path[change.path] = {}
+    order[#order + 1] = change.path
+  end
+  local list = by_path[change.path]
+  list[#list + 1] = change
+end
+
+local changed, failed = 0, 0
+
+for _, rel in ipairs(order) do
+  local path = opts.vault .. "/" .. rel
+  local changes = by_path[rel]
+  local text = vdir.read(path)
+
+  if not text then
+    io.stderr:write(("mdical-ingest: could not read %s\n"):format(path))
+    failed = failed + 1
+  else
+    local updated, stale = ratchet.splice(text, changes)
+    if #stale > 0 then
+      io.stderr:write(("mdical-ingest: %s changed underneath us at line %s - writing nothing\n")
+        :format(rel, table.concat(stale, ", ")))
+      failed = failed + 1
+    else
+      for _, change in ipairs(changes) do
+        say("  %s:%d  %s", rel, change.lnum, change.action)
+        if opts.verbose then
+          say("      - %s", change.before)
+          say("      + %s", change.after)
+        end
+        changed = changed + 1
+      end
+      if not opts.dry_run then
+        local ok, err = vdir.write_file(path, updated)
+        if not ok then
+          io.stderr:write(("mdical-ingest: could not write %s: %s\n"):format(path, tostring(err)))
+          failed = failed + 1
+        end
+      end
+    end
+  end
+end
+
+say("%s %d lines in %d notes", opts.dry_run and "would change" or "changed", changed, #order)
+os.exit(failed == 0 and 0 or 1)

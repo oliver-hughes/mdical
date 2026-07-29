@@ -1,0 +1,14 @@
+[Unit]
+Description=mdical: notes to calendar, and completions back
+After=network-online.target radicale.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cal
+Group=cal
+ExecStart=/opt/cal/mdical/server/run.sh
+
+# Nothing hardened here on purpose: it runs git over ssh, curl, and vdirsyncer,
+# and every sandbox option would be one more thing to debug at 3am. radicale is
+# the process with an open socket and that is the one worth confining.

@@ -14,10 +14,12 @@ Markers are org-mode's timestamp syntax, inline on the line, with `- [ ]`/`- [x]
 standing in for `TODO`/`DONE`. Angle brackets are live and square brackets are
 not, so a date can be written into a note without becoming an entry.
 
-**Status: early.** The parser, the linter, the inserter and the calendar build
-all work. What is missing is the container the build runs on - radicale,
-vdirsyncer, tailscale - and the completion ratchet that reads ticked-off tasks
-back into markdown.
+**Status: early, but end to end.** The parser, the linter, the inserter, the
+calendar build, the completion ratchet and the container that runs them are all
+written and tested. What has not happened yet is any of it running against a real
+radicale and a real phone, so everything downstream of the vdir is grounded in
+recorded wire evidence rather than in a working system.
+[`server/README.md`](server/README.md) is the runbook for standing that up.
 
 ## Install
 
@@ -126,10 +128,8 @@ Reads the vault, writes a [vdir](https://vdirsyncer.pimutils.org/en/stable/vdir.
 this owns files. That is why lua was a safe choice despite there being no usable
 lua CalDAV library.
 
-It is step 6 of the nightly run, "rebuild the vdir from markdown". The steps
-around it - `git pull`, `vdirsyncer sync`, reading completions back - are not
-here yet. Order will matter when they are: **ingest before reconcile**, or
-anything the phone did gets deleted as an orphan.
+It is step 6 of the nightly run, "rebuild the vdir from markdown".
+[`server/`](server/README.md) sequences the rest around it.
 
 ### What it will not do to your calendar
 
@@ -139,10 +139,19 @@ would silently eat it. Two overlapping guards stop that: every emitted UID
 carries an `mdical-` prefix, and `state/last-build.lua` records what the last run
 wrote. A resource has to fail both checks to be removed.
 
-**It refuses to publish a collapse.** If the item count falls by more than 20%
-against the last run it exits non-zero and changes nothing, because one bad parse
-otherwise empties the calendar quietly and nothing notices for a week.
-`--allow-drop` changes the tolerance, `--force` overrides it.
+**It refuses to publish a collapse.** If the number of markers, or of notes
+scanned, falls by more than 20% against the last run it exits non-zero and changes
+nothing, because one bad parse otherwise empties the calendar quietly and nothing
+notices for a week. `--allow-drop` changes the tolerance, `--force` overrides it.
+
+The gate counts *markers*, not emitted items, which is the second version of it.
+Item counts move for entirely legitimate reasons: completing a `+1m` task advances
+its anchor, and because the horizon is measured from today while expansion starts
+at the anchor, three occurrences become one. The first ratchet run on a five-item
+test vault dropped the count by 37% and was refused. Markers only fall when lines
+stop promoting, which is what a broken parser actually looks like - and
+`mdical-ingest` leaves behind a credit for the ones it closed, so a productive day
+does not read like a regression either.
 
 **Its output is byte-stable.** The same markdown produces the same bytes, so a
 re-run writes nothing at all and the nightly commit is empty unless something
@@ -171,6 +180,64 @@ state.
 Three things are never expanded: a one-off, a `.+` cookie - whose next date is a
 function of the completion date, so it is not a series - and an `RRULE:`
 passthrough, which is emitted verbatim for iOS to expand.
+
+## The completion ratchet
+
+```sh
+bin/mdical-ingest --vault ~/vaults/brain --vdir /opt/cal/vdir --dry-run --verbose
+```
+
+Steps 3 and 4 of the nightly run, and **the only thing in the whole pipeline that
+writes to your notes**. It reads the tasks collection after vdirsyncer has filled
+it with whatever the phone did, and writes the completions back.
+
+| marker | ticked on the phone |
+|--------|---------------------|
+| one-off | `- [ ]` becomes `- [x]`, and `CLOSED:` records when |
+| `+N` | the timestamp advances one interval from the occurrence that was ticked |
+| `++N` | the timestamp advances past today |
+| `.+N` | the timestamp becomes the completion date plus N |
+| `RRULE:` | nothing - iOS expanded it, so iOS owns it |
+
+A repeater keeps its `- [ ]` and gets no `CLOSED:`, which mirrors org: completing a
+repeating task moves the date rather than closing the entry. The new anchor already
+*is* the result of the arithmetic, so a `CLOSED:` beside it could only disagree
+with it. Ticking one by hand in the editor therefore ends the series, and the
+parser warns about that (`done-repeater`).
+
+Advancing from the ticked occurrence rather than from the anchor matters when an
+earlier one was missed. Tick September's rent with August's still outstanding and
+the anchor moves to October; from the anchor it would move to September and the
+task you just completed would come straight back.
+
+### What it will not do to your notes
+
+**Only the changed lines change.** Line endings, indentation and the presence or
+absence of a final newline are preserved exactly. A rewrite that normalised them
+would show up as a whole-file diff, in your own notes, in a commit you did not
+make, and would bury the one line that actually moved.
+
+**Every write is a temp file plus a rename**, so a note is never half-written.
+
+**It re-checks each line before writing it.** The plan was made from the same bytes
+moments earlier, so a mismatch means something else is editing the vault - and the
+answer is to write nothing to that file rather than guess.
+
+**A resource it did not emit is never touched.** A task created on the phone has a
+UID with no marker behind it. It is counted and left where it is; ingesting those
+into an `## Inbox` is a later addition and this rule means waiting costs nothing.
+
+### Matching a resource back to a line
+
+UIDs are content hashes, so they cannot be reversed. Instead the index the build
+would produce - kind, summary and occurrence date, per marker - is rebuilt and
+completions are looked up in it. Two consequences: moving a marker between notes
+does not break the match, and renaming a task does. A renamed task comes back,
+because as far as the UID is concerned it is a different task.
+
+`COMPLETED:` is read in UTC and converted to local wall time. M0 recorded
+`COMPLETED:20260728T195946Z` from a tick at 20:59 on a July evening, so writing the
+UTC value into a note would be an hour wrong and, near midnight, a day wrong.
 
 ## Config
 
@@ -235,13 +302,19 @@ requires it under bare luajit on a server with no editor in the picture. CI
 enforces that with a grep.
 
 ```
-lua/mdical/          pure: grammar, parse, date, fmt, edit, scope, ics, uid
+lua/mdical/          pure: grammar, parse, date, fmt, edit, scope, ics, ical, uid, ratchet
 lua/mdical/          io:   scan, vdir, state
 lua/mdical/nvim/     editor: the command, the inserter, the picker, the linter
 plugin/mdical.lua    :Mdical
 bin/mdical-build     markdown -> a vdir
+bin/mdical-ingest    completions -> markdown
+server/              the container: run.sh, the configs, bootstrap.sh
 tests/               luajit tests/run.lua
 ```
+
+`ics` writes iCalendar and `ical` reads it. They are deliberately separate and
+deliberately asymmetric: writing has to be exactly right, reading only has to
+recover four properties from a `VTODO` some other client wrote.
 
 Diagnostics come out of the parser rather than a separate linter, so the editor
 and the build reach the same verdict from the same code. A line with an

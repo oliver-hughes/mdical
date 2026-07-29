@@ -1,0 +1,24 @@
+[Unit]
+Description=Radicale CalDAV server
+Documentation=https://radicale.org/
+After=network.target
+
+[Service]
+Type=simple
+User=cal
+Group=cal
+ExecStart=/usr/local/bin/radicale --config /etc/radicale/config
+Restart=on-failure
+RestartSec=5
+
+# It listens on localhost only and tailscale does the exposing, so there is no
+# reason for it to reach anything else. `strict` makes the whole filesystem
+# read-only, which is why the collections directory has to be named.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/radicale
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

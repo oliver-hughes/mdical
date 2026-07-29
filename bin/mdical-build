@@ -31,6 +31,7 @@ local opts = {
   allow_drop = 0.2,
   force = false,
   healthcheck = nil,
+  rev = nil,
   events_dir = "cal-events",
   tasks_dir = "cal-tasks",
   events_colour = "#3584e4",
@@ -52,6 +53,7 @@ usage: mdical-build --vault DIR [--vdir DIR] [--state DIR] [options]
   --allow-drop N     fraction the item count may fall before refusing (0.2)
   --force            publish even if the count-drop gate objects
   --healthcheck URL  curl this on success - a dead man's switch
+  --rev REV          record which mdical built this, in last-build.lua
 ]])
   os.exit(message and 2 or 0)
 end
@@ -73,6 +75,8 @@ while i <= #arg do
     opts.allow_drop = tonumber(value()) or usage("--allow-drop wants a number")
   elseif a == "--healthcheck" then
     opts.healthcheck = value()
+  elseif a == "--rev" then
+    opts.rev = value()
   elseif a == "--dry-run" then
     opts.dry_run = true
   elseif a == "--verbose" then
@@ -141,10 +145,25 @@ end
 ------------------------------------------------------------------------ gate
 
 local state_path = opts.state .. "/last-build.lua"
+local ingest_path = opts.state .. "/last-ingest.lua"
 local previous = state.read(state_path)
-local counts = { tasks = #by_kind.task, events = #by_kind.event }
+local counts = {
+  -- markers and notes are what the gate watches; tasks and events are recorded
+  -- for the report and are too noisy to gate on - see `state.GATE_KEYS`
+  markers = #vault.markers,
+  notes = vault.notes_scanned,
+  tasks = #by_kind.task,
+  events = #by_kind.event,
+}
 
-local ok, why = state.gate(previous.counts, counts, { allow_drop = opts.allow_drop })
+--- Drops the ratchet has already explained. Read here and cleared below, so it is
+--- spent exactly once however many times the build runs.
+local credit = state.read(ingest_path).credit or {}
+if (credit.markers or 0) > 0 then
+  say("gate: crediting %d markers the ratchet closed", credit.markers)
+end
+
+local ok, why = state.gate(previous.counts, counts, { allow_drop = opts.allow_drop, credit = credit })
 if not ok then
   if opts.force then
     say("gate: %s - publishing anyway (--force)", why)
@@ -192,10 +211,20 @@ if opts.dry_run then
 end
 
 vdir.ensure(opts.state)
-local written, err = state.write(state_path, { version = 1, counts = counts, uids = emitted })
+--- `rev` is recorded so a calendar that looks wrong can be traced to a parser
+--- rather than to the notes: if the box is two weeks behind on mdical, this is
+--- the only place that would say so.
+local written, err = state.write(state_path,
+  { version = 1, counts = counts, uids = emitted, rev = opts.rev })
 if not written then
   io.stderr:write(("mdical-build: could not write %s: %s\n"):format(state_path, tostring(err)))
   os.exit(1)
+end
+
+--- Spend the credit. `previous.counts` now reflects the closures, so a second
+--- build tonight has nothing left to explain and should get no discount.
+if (credit.markers or 0) > 0 then
+  state.write(ingest_path, { version = 1, credit = { markers = 0 } })
 end
 
 --- A container that has been down a week should be noticed. Nothing else will

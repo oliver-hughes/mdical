@@ -27,6 +27,14 @@ jobs:
             exit 1
           fi
 
+      # The nightly run is shell and cannot be unit tested, so this is the only
+      # automated opinion there is about it. It already caught a sudo redirect
+      # writing a root-owned file and an `A && B || C` in the push-failure path.
+      - name: shellcheck the server scripts
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck server/*.sh
+
   nvim:
     runs-on: ubuntu-latest
     steps:

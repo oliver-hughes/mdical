@@ -140,28 +140,54 @@ end)
 
 describe("state.gate", function()
   it("passes when the counts hold up", function()
-    truthy(state.gate({ tasks = 10, events = 10 }, { tasks = 10, events = 12 }), "steady or growing")
-    truthy(state.gate({ tasks = 10, events = 10 }, { tasks = 9, events = 10 }), "a small dip")
+    truthy(state.gate({ markers = 10, notes = 10 }, { markers = 10, notes = 12 }), "steady or growing")
+    truthy(state.gate({ markers = 10, notes = 10 }, { markers = 9, notes = 10 }), "a small dip")
   end)
 
   it("refuses a collapse, which is what one bad parse looks like", function()
-    local ok, why = state.gate({ tasks = 30, events = 10 }, { tasks = 0, events = 10 })
+    local ok, why = state.gate({ markers = 30, notes = 10 }, { markers = 0, notes = 10 })
     eq(ok, false, "refused")
-    truthy(why and why:find("tasks", 1, true), "and says which: " .. tostring(why))
+    truthy(why and why:find("markers", 1, true), "and says which: " .. tostring(why))
   end)
 
-  it("catches events collapsing too", function()
-    eq(select(1, state.gate({ tasks = 10, events = 30 }, { tasks = 10, events = 1 })), false, "events")
+  it("catches the notes going away, which is a checkout that did not update", function()
+    eq(select(1, state.gate({ markers = 10, notes = 30 }, { markers = 10, notes = 1 })), false, "notes")
+  end)
+
+  it("watches markers rather than items, because completion moves items about", function()
+    -- The real case this exists for: ticking a `+1m` task advances its anchor,
+    -- and since the horizon runs from today while expansion runs from the anchor,
+    -- three occurrences become one. An ordinary night looked like a broken parse.
+    eq(state.GATE_KEYS, { "markers", "notes" }, "not tasks and events")
+    truthy(state.gate({ markers = 7, notes = 1, tasks = 8 }, { markers = 7, notes = 1, tasks = 5 }),
+      "items fell by a third and the gate does not care")
+  end)
+
+  it("credits the drop the ratchet already explained", function()
+    -- eight one-offs ticked out of forty markers is a 20% fall and entirely
+    -- normal; without the credit it reads exactly like a parser regression
+    eq(select(1, state.gate({ markers = 40 }, { markers = 32 }, { allow_drop = 0.15 })), false,
+      "refused with no explanation")
+    truthy(state.gate({ markers = 40 }, { markers = 32 }, { allow_drop = 0.15, credit = { markers = 8 } }),
+      "allowed once the closures are accounted for")
+  end)
+
+  it("does not let a credit excuse an unrelated collapse", function()
+    eq(select(1, state.gate({ markers = 40 }, { markers = 0 }, { credit = { markers = 8 } })), false,
+      "32 explained, the other 32 are not")
   end)
 
   it("does not fire on a vault too small for a ratio to mean anything", function()
-    truthy(state.gate({ tasks = 2, events = 0 }, { tasks = 0, events = 0 }), "under the floor")
-    truthy(state.gate({ tasks = 0, events = 0 }, { tasks = 0, events = 0 }), "a first run")
+    truthy(state.gate({ markers = 2, notes = 0 }, { markers = 0, notes = 0 }), "under the floor")
+    truthy(state.gate({ markers = 0, notes = 0 }, { markers = 0, notes = 0 }), "a first run")
   end)
 
   it("takes a different tolerance", function()
-    truthy(state.gate({ tasks = 10, events = 0 }, { tasks = 6, events = 0 }, { allow_drop = 0.5 }), "half allowed")
-    eq(select(1, state.gate({ tasks = 10, events = 0 }, { tasks = 6, events = 0 }, { allow_drop = 0.1 })), false,
-      "a tenth is not")
+    truthy(state.gate({ markers = 10 }, { markers = 6 }, { allow_drop = 0.5 }), "half allowed")
+    eq(select(1, state.gate({ markers = 10 }, { markers = 6 }, { allow_drop = 0.1 })), false, "a tenth is not")
+  end)
+
+  it("watches whichever keys it is given", function()
+    eq(select(1, state.gate({ tasks = 30 }, { tasks = 0 }, { keys = { "tasks" } })), false, "tasks, when asked")
   end)
 end)

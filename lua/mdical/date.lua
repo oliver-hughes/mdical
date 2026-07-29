@@ -1,10 +1,11 @@
 --- Date arithmetic for markers. Pure lua 5.1, no `os.time`, no `vim`.
 ---
---- Deliberately avoids `os.time`/`os.date` for anything but "what is today":
---- `os.time` normalises overflow (Jan 32 -> Feb 1), which is org's behaviour and
---- exactly the thing the grammar overrides, and `os.date("%a")` is locale
---- dependent. Everything here is integer arithmetic on a day count instead, so
---- there is no DST, no timezone and no locale in the picture.
+--- Deliberately avoids `os.time`/`os.date` for all but two things - "what is
+--- today", and the UTC offset at a given instant. `os.time` normalises overflow
+--- (Jan 32 -> Feb 1), which is org's behaviour and exactly the thing the grammar
+--- overrides, and `os.date("%a")` is locale dependent. Everything else here is
+--- integer arithmetic on a day count, so there is no DST, no timezone and no
+--- locale in the picture.
 ---
 --- A `date` throughout is `{ year = 2026, month = 8, day = 1 }`.
 
@@ -115,10 +116,57 @@ function M.add(d, n, unit)
   error("unknown unit: " .. tostring(unit))
 end
 
---- Today, as a date. The only thing in this module that reads the clock.
+--- Today, as a date. One of only two things here that read the clock.
 function M.today()
   local t = os.date("*t")
   return { year = t.year, month = t.month, day = t.day }
+end
+
+--------------------------------------------------------------------- instants
+
+--- Seconds since 1970-01-01T00:00:00, treating `d`/`t` as UTC.
+--- `to_days` is already days-from-the-epoch, so this is arithmetic, not
+--- `os.time` - which would read the local zone and normalise overflow.
+function M.to_epoch(d, t)
+  t = t or {}
+  return M.to_days(d) * 86400 + (t.hour or 0) * 3600 + (t.min or 0) * 60 + (t.sec or 0)
+end
+
+--- Inverse of `to_epoch`.
+--- @return table date, table time
+function M.from_epoch(seconds)
+  local days = math.floor(seconds / 86400)
+  local rem = seconds - days * 86400
+  return M.from_days(days), {
+    hour = math.floor(rem / 3600),
+    min = math.floor((rem % 3600) / 60),
+    sec = rem % 60,
+  }
+end
+
+--- The system's offset from UTC, in seconds, at a given instant.
+---
+--- The second thing here that reads the clock, and the only place a real
+--- timezone enters this module. Asking `os.date` for the same instant twice -
+--- once UTC, once local - gets the offset *including* whether DST was in force
+--- then, which is the part a fixed number would get wrong twice a year.
+function M.utc_offset(epoch)
+  local u, l = os.date("!*t", epoch), os.date("*t", epoch)
+  return M.to_epoch({ year = l.year, month = l.month, day = l.day }, l)
+    - M.to_epoch({ year = u.year, month = u.month, day = u.day }, u)
+end
+
+--- A UTC instant as local wall time.
+---
+--- The phone writes `COMPLETED:20260728T195946Z`; a human reading `CLOSED:` in a
+--- note wants to see 20:59 on a July evening, not 19:59.
+---
+--- @param offset integer|nil seconds from UTC; defaults to the system's, and is
+---   passed explicitly by the tests so they do not depend on where they run
+--- @return table date, table time
+function M.utc_to_local(d, t, offset)
+  local epoch = M.to_epoch(d, t)
+  return M.from_epoch(epoch + (offset or M.utc_offset(epoch)))
 end
 
 --- The next occurrence of a repeating marker, honouring all three org

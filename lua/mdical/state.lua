@@ -69,6 +69,25 @@ function M.write(path, value)
   return true
 end
 
+--- Which counts the gate watches.
+---
+--- **Markers and notes, not tasks and events.** The item counts move for
+--- entirely legitimate reasons and are too noisy to gate on: completing a
+--- repeating task advances its anchor, and because the horizon is measured from
+--- today while expansion starts at the anchor, a `+1m` task pushed three months
+--- out has one occurrence in the window where it used to have three. One ordinary
+--- night of completions can drop the item count by a third.
+---
+--- Markers move only when lines stop promoting, which is what a parser regression
+--- or a bad scope tag actually looks like. `notes` catches the scariest case most
+--- directly - a vault checkout that did not update, or a `find` that returned
+--- nothing.
+---
+--- The cost of the change is that a horizon misconfiguration would blow the item
+--- counts up or down without moving either of these. The build prints both, so it
+--- is visible rather than silent.
+M.GATE_KEYS = { "markers", "notes" }
+
 --- Would publishing these counts be a suspicious collapse?
 ---
 --- One bad parse otherwise empties the calendar quietly, and nothing else would
@@ -76,15 +95,23 @@ end
 ---
 --- @param previous table counts from the last run
 --- @param current table counts from this run
---- @param opts table|nil { allow_drop = 0.2, floor = 5 }
+--- @param opts table|nil {
+---   allow_drop = 0.2, floor = 5,
+---   keys = M.GATE_KEYS,
+---   credit = { markers = n }  drops this run has an explanation for }
 --- @return boolean ok, string|nil why
 function M.gate(previous, current, opts)
   opts = opts or {}
   local allow = opts.allow_drop or 0.2
   local floor = opts.floor or 5
+  local credit = opts.credit or {}
 
-  for _, kind in ipairs({ "tasks", "events" }) do
-    local was, now = previous[kind] or 0, current[kind] or 0
+  for _, kind in ipairs(opts.keys or M.GATE_KEYS) do
+    -- A completion the ratchet applied this run is an accounted-for drop, so it
+    -- comes off the baseline rather than counting against it. Without this, a
+    -- productive day looks exactly like a broken parser.
+    local was = math.max(0, (previous[kind] or 0) - (credit[kind] or 0))
+    local now = current[kind] or 0
     -- below the floor there is not enough history for a ratio to mean anything
     if was >= floor and now < was * (1 - allow) then
       return false, ("%s fell from %d to %d, more than the %d%% the gate allows")

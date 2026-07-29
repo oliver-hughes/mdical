@@ -1,0 +1,16 @@
+[Unit]
+Description=mdical nightly run
+
+[Timer]
+# 03:17 rather than 03:00: distinctive in a log, and not sharing a minute with
+# every other cron job in the house.
+OnCalendar=*-*-* 03:17:00
+
+# The reason this is a timer and not a cron line. A container that was off at
+# 03:17 runs as soon as it comes back, so a day of completions is not silently
+# skipped.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

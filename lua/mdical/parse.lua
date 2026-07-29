@@ -387,6 +387,14 @@ function M.line(line)
   if p.kind == "task" and p.done and not p.closed then
     diag(M.INFO, "done-without-closed", "completed with no CLOSED: - `.+` repeaters need one", 1, #line)
   end
+  if p.kind == "task" and p.done and p.due and p.due.repeater then
+    -- Completion normally reaches a repeater through the ratchet, which advances
+    -- the date and leaves the box unticked. A ticked one has been closed by hand
+    -- and the series stops here, silently, which is worth being told.
+    diag(M.WARN, "done-repeater",
+      "ticking a repeating task ends the series - advance the date instead of `- [x]`",
+      p.due.span.s, p.due.span.e)
+  end
 
   local has_error = false
   for _, d in ipairs(p.diagnostics) do
