@@ -56,8 +56,11 @@ Clone over HTTPS the first time because there is no key yet. Once bootstrap has
 made one, `run.sh` pulls mdical over `github-mdical`, so switch the remote after:
 
 ```
-sudo -H -u cal git -C /opt/cal/mdical remote set-url origin git@github-mdical:oliver-hughes/mdical.git
+runuser -u cal -- git -C /opt/cal/mdical remote set-url origin git@github-mdical:oliver-hughes/mdical.git
 ```
+
+While mdical is a public repo you can skip this entirely and leave `origin` on
+HTTPS - `run.sh` pulls it fine, and the mdical deploy key goes unused.
 
 ## 3. tailscale
 
@@ -116,9 +119,19 @@ is the way to see the ratchet advance a date rather than close a task.
 
 ## 6. the first run
 
+Run these as root. `run.sh` re-executes itself as the `cal` user, so there is
+nothing to remember - and a minimal LXC template has no `sudo` anyway.
+
 ```
-sudo -H -u cal /opt/cal/mdical/server/run.sh --dry-run --pull --verbose
-sudo -H -u cal /opt/cal/mdical/server/run.sh --verbose
+/opt/cal/mdical/server/run.sh --dry-run --pull --verbose
+/opt/cal/mdical/server/run.sh --verbose
+```
+
+Running it as `cal` directly works too, but `HOME` has to be right or ssh will not
+find the `github-vault` alias:
+
+```
+runuser -u cal -- env HOME=/opt/cal /opt/cal/mdical/server/run.sh --verbose
 ```
 
 **`--pull` matters.** `--dry-run` on its own deliberately does not touch git, which

@@ -55,7 +55,7 @@ DRY_RUN=
 NO_SYNC=
 VERBOSE=
 PULL=
-ARGV="$*"
+ORIG_ARGS=("$@")
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,19 +89,27 @@ for tool in git luajit vdirsyncer; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
 
-# Running as the wrong user is quietly destructive. Git objects and note files end
-# up owned by root, and the nightly service - which runs as cal - cannot write them
-# afterwards, so the timer starts failing days later for no visible reason.
+# This has to run as cal. Running it as root is quietly destructive: git objects and
+# note files end up owned by root, the nightly service - which runs as cal - cannot
+# write them afterwards, and the timer starts failing days later for no visible
+# reason. It also means ssh reads root's ~/.ssh, where the github-vault alias does
+# not exist, which is how that first surfaced as an unresolvable hostname.
 #
-# It also means ssh reads the wrong ~/.ssh, which is how this first showed up:
-# "could not resolve hostname github-vault", because the Host alias lives in cal's
-# config and root has never heard of it.
+# So drop privileges here rather than making the caller remember how. `runuser` is
+# util-linux and always present; `sudo` is not shipped by a minimal Debian LXC
+# template at all. HOME is set explicitly because runuser does not, and that is the
+# whole reason the ssh aliases were not resolving.
 CAL_AS="${CAL_AS:-cal}"
 if [ "$(id -un)" != "$CAL_AS" ] && [ -z "${ALLOW_ANY_USER:-}" ]; then
-  die "run this as $CAL_AS, not $(id -un):
-
-    sudo -H -u $CAL_AS $0 $ARGV
-
+  if [ "$(id -u)" = 0 ] && command -v runuser >/dev/null 2>&1; then
+    log "running as root - re-executing as $CAL_AS"
+    # Absolute, because runuser need not preserve a working directory that cal can
+    # reach, and a relative $0 would then not exist.
+    self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    exec runuser -u "$CAL_AS" -- env HOME="$CAL_ROOT" "$self" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+  fi
+  die "run this as $CAL_AS, not $(id -un). As root it re-executes itself;
+  otherwise:  runuser -u $CAL_AS -- env HOME=$CAL_ROOT $0 ...
   ALLOW_ANY_USER=1 overrides, but expect root-owned files in the vault."
 fi
 

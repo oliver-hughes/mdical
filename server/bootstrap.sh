@@ -254,8 +254,12 @@ Left to do by hand, both in README.md:
   tailscale up && tailscale serve --bg https / http://localhost:5232
   add the CalDAV account on the phone, SSL on
 
-Then a first run you can watch:
+Then a first run you can watch. Run them as root - run.sh re-executes itself as
+the cal user, so there is nothing to remember and no need for sudo:
 
-  sudo -H -u cal $MDICAL/server/run.sh --dry-run --verbose
-  sudo -H -u cal $MDICAL/server/run.sh --verbose
+  $MDICAL/server/run.sh --dry-run --pull --verbose
+  $MDICAL/server/run.sh --verbose
+
+--pull matters on a dry run: without it the preview reads the checkout as it
+stands, which is not what you just pushed from the laptop.
 EOF
