@@ -14,9 +14,10 @@ Markers are org-mode's timestamp syntax, inline on the line, with `- [ ]`/`- [x]
 standing in for `TODO`/`DONE`. Angle brackets are live and square brackets are
 not, so a date can be written into a note without becoming an entry.
 
-**Status: early.** The parser, the linter and the inserter work. The nightly
-build that turns these markers into a CalDAV calendar and reads completions back
-is the other consumer of the same parser, and is not here yet.
+**Status: early.** The parser, the linter, the inserter and the calendar build
+all work. What is missing is the container the build runs on - radicale,
+vdirsyncer, tailscale - and the completion ratchet that reads ticked-off tasks
+back into markdown.
 
 ## Install
 
@@ -111,6 +112,66 @@ the `+1m` / `++1m` / `.+1m` distinction:
 +1y -21d   yearly, warned three weeks early
 ```
 
+
+## The calendar build
+
+```sh
+bin/mdical-build --vault ~/vaults/brain --dry-run
+bin/mdical-build --vault ~/vaults/brain --vdir /opt/cal/vdir --healthcheck https://...
+```
+
+Reads the vault, writes a [vdir](https://vdirsyncer.pimutils.org/en/stable/vdir.html)
+- a directory of `.ics` files, one item per file, named by UID - into
+`cal-tasks/` and `cal-events/`. It never speaks CalDAV: vdirsyncer owns the wire,
+this owns files. That is why lua was a safe choice despite there being no usable
+lua CalDAV library.
+
+It is step 6 of the nightly run, "rebuild the vdir from markdown". The steps
+around it - `git pull`, `vdirsyncer sync`, reading completions back - are not
+here yet. Order will matter when they are: **ingest before reconcile**, or
+anything the phone did gets deleted as an orphan.
+
+### What it will not do to your calendar
+
+**It only deletes resources it emitted.** A task created on the phone has a UID
+this build has never seen, and a strict "markdown is the only source" rebuild
+would silently eat it. Two overlapping guards stop that: every emitted UID
+carries an `mdical-` prefix, and `state/last-build.lua` records what the last run
+wrote. A resource has to fail both checks to be removed.
+
+**It refuses to publish a collapse.** If the item count falls by more than 20%
+against the last run it exits non-zero and changes nothing, because one bad parse
+otherwise empties the calendar quietly and nothing notices for a week.
+`--allow-drop` changes the tolerance, `--force` overrides it.
+
+**Its output is byte-stable.** The same markdown produces the same bytes, so a
+re-run writes nothing at all and the nightly commit is empty unless something
+really changed. There is no `DTSTAMP: now()` anywhere - it is derived from the
+item. Without this every run would be a meaningless commit and real changes would
+vanish in the diff.
+
+**TEXT is escaped.** `,` `;` and `\` in a summary, folded at 75 octets. The spike
+caught radicale storing `buy milk` and dropping the rest of `buy milk, bread and
+eggs` - server-side, before the phone ever saw it - and real note text has commas
+in it constantly.
+
+### Recurrence is expanded, not delegated
+
+`+1m` becomes several resources rather than an `RRULE`, because `+1m` and `++1m`
+map to the *same* rule - `FREQ=MONTHLY` has no notion of completion - so
+delegating silently discards a distinction the grammar makes. Clamping is not
+expressible in `RRULE` either, which skips where we clamp.
+
+Tasks expand over three months and events over twelve, on the grounds that twelve
+months of "pay rent" is twelve reminders where twelve months of a birthday is a
+calendar that looks right. Occurrences more than a week in the past are dropped;
+a non-repeating item is always emitted however overdue, since overdue is a real
+state.
+
+Three things are never expanded: a one-off, a `.+` cookie - whose next date is a
+function of the completion date, so it is not a series - and an `RRULE:`
+passthrough, which is emitted verbatim for iOS to expand.
+
 ## Config
 
 ```lua
@@ -174,9 +235,11 @@ requires it under bare luajit on a server with no editor in the picture. CI
 enforces that with a grep.
 
 ```
-lua/mdical/          pure: grammar, parse, date, fmt, edit, scope
+lua/mdical/          pure: grammar, parse, date, fmt, edit, scope, ics, uid
+lua/mdical/          io:   scan, vdir, state
 lua/mdical/nvim/     editor: the command, the inserter, the picker, the linter
 plugin/mdical.lua    :Mdical
+bin/mdical-build     markdown -> a vdir
 tests/               luajit tests/run.lua
 ```
 

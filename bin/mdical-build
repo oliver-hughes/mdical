@@ -1,0 +1,207 @@
+#!/usr/bin/env luajit
+--- Build the vdir from the vault.
+---
+---   mdical-build --vault ~/vaults/brain --vdir /opt/cal/vdir --state /opt/cal/state
+---   mdical-build --vault ~/vaults/brain --dry-run
+---
+--- This is step 6 of the nightly run - "rebuild the vdir from markdown". It does
+--- not touch git, does not run vdirsyncer, and never speaks CalDAV; `run.sh`
+--- sequences those around it. Order matters there: **ingest before reconcile**,
+--- or anything the phone did gets deleted as an orphan.
+---
+--- Two safety rails live here rather than in the shell, because both need to know
+--- what was emitted: the count-drop gate, and the rule that only resources this
+--- build previously emitted are ever deleted.
+
+local here = arg[0]:match("^(.*)/bin/[^/]+$") or "."
+package.path = here .. "/lua/?.lua;" .. here .. "/lua/?/init.lua;" .. package.path
+
+local ics = require("mdical.ics")
+local scan = require("mdical.scan")
+local vdir = require("mdical.vdir")
+local state = require("mdical.state")
+local parse = require("mdical.parse")
+
+local opts = {
+  vault = nil,
+  vdir = nil,
+  state = nil,
+  dry_run = false,
+  verbose = false,
+  allow_drop = 0.2,
+  force = false,
+  healthcheck = nil,
+  events_dir = "cal-events",
+  tasks_dir = "cal-tasks",
+  events_colour = "#3584e4",
+  tasks_colour = "#e66100",
+}
+
+local function usage(message)
+  if message then
+    io.stderr:write("mdical-build: " .. message .. "\n\n")
+  end
+  io.stderr:write([[
+usage: mdical-build --vault DIR [--vdir DIR] [--state DIR] [options]
+
+  --vault DIR        the notes checkout to read
+  --vdir DIR         where cal-events/ and cal-tasks/ live
+  --state DIR        where last-build.lua lives (default: --vdir/../state)
+  --dry-run          report what would change, write nothing
+  --verbose          list every marker and every diagnostic
+  --allow-drop N     fraction the item count may fall before refusing (0.2)
+  --force            publish even if the count-drop gate objects
+  --healthcheck URL  curl this on success - a dead man's switch
+]])
+  os.exit(message and 2 or 0)
+end
+
+local i = 1
+while i <= #arg do
+  local a = arg[i]
+  local function value()
+    i = i + 1
+    return arg[i] or usage("missing value for " .. a)
+  end
+  if a == "--vault" then
+    opts.vault = value()
+  elseif a == "--vdir" then
+    opts.vdir = value()
+  elseif a == "--state" then
+    opts.state = value()
+  elseif a == "--allow-drop" then
+    opts.allow_drop = tonumber(value()) or usage("--allow-drop wants a number")
+  elseif a == "--healthcheck" then
+    opts.healthcheck = value()
+  elseif a == "--dry-run" then
+    opts.dry_run = true
+  elseif a == "--verbose" then
+    opts.verbose = true
+  elseif a == "--force" then
+    opts.force = true
+  elseif a == "-h" or a == "--help" then
+    usage()
+  else
+    usage("unknown argument: " .. a)
+  end
+  i = i + 1
+end
+
+if not opts.vault then
+  usage("--vault is required")
+end
+if not opts.vdir and not opts.dry_run then
+  usage("--vdir is required unless --dry-run")
+end
+opts.state = opts.state or (opts.vdir and (opts.vdir .. "/../state"))
+
+local function say(fmt, ...)
+  print(select("#", ...) > 0 and fmt:format(...) or fmt)
+end
+
+------------------------------------------------------------------------ read
+
+local vault = scan.vault(opts.vault, nil)
+
+local by_kind = { task = {}, event = {} }
+for _, marker in ipairs(vault.markers) do
+  for _, item in ipairs(ics.items(marker.parsed)) do
+    local list = by_kind[item.kind]
+    list[#list + 1] = item
+    if opts.verbose then
+      say("  %-7s %s:%d  %s", item.kind, marker.path, marker.lnum, marker.parsed.summary)
+    end
+  end
+end
+
+local errors, warnings = 0, 0
+for _, d in ipairs(vault.diagnostics) do
+  if d.severity == parse.ERROR then
+    errors = errors + 1
+  elseif d.severity == parse.WARN then
+    warnings = warnings + 1
+  end
+  if opts.verbose then
+    say("  %-5s %-26s %s:%d  %s", d.severity, d.code, d.path, d.lnum, d.msg)
+  end
+end
+
+say("scanned %d notes (%d skipped by tag), %d lines, %d checkbox lines",
+  vault.notes_scanned, vault.notes_skipped, vault.lines, vault.checkboxes)
+say("emitting %d tasks and %d events from %d markers",
+  #by_kind.task, #by_kind.event, #vault.markers)
+if errors + warnings > 0 then
+  say("lint: %d errors (not emitted), %d warnings", errors, warnings)
+end
+
+if opts.dry_run and not opts.vdir then
+  os.exit(0)
+end
+
+------------------------------------------------------------------------ gate
+
+local state_path = opts.state .. "/last-build.lua"
+local previous = state.read(state_path)
+local counts = { tasks = #by_kind.task, events = #by_kind.event }
+
+local ok, why = state.gate(previous.counts, counts, { allow_drop = opts.allow_drop })
+if not ok then
+  if opts.force then
+    say("gate: %s - publishing anyway (--force)", why)
+  else
+    io.stderr:write(("mdical-build: refusing to publish - %s\n"):format(why))
+    io.stderr:write("  re-run with --force once you have looked at why\n")
+    os.exit(1)
+  end
+end
+
+----------------------------------------------------------------------- write
+
+local previous_uids = next(previous.uids) and previous.uids or nil
+local emitted = {}
+local wrote, removed, kept, unchanged = 0, 0, 0, 0
+
+local collections = {
+  { kind = "task", dir = opts.tasks_dir, colour = opts.tasks_colour },
+  { kind = "event", dir = opts.events_dir, colour = opts.events_colour },
+}
+
+for _, collection in ipairs(collections) do
+  local dir_name = collection.dir
+  local dir = opts.vdir .. "/" .. dir_name
+  local stats = vdir.sync(dir, by_kind[collection.kind], {
+    previous = previous_uids,
+    dry_run = opts.dry_run,
+    colour = collection.colour,
+  })
+  wrote, removed = wrote + stats.written, removed + stats.removed
+  kept, unchanged = kept + stats.kept_unknown, unchanged + stats.unchanged
+  for id in pairs(stats.uids) do
+    emitted[id] = true
+  end
+  for _, err in ipairs(stats.errors) do
+    io.stderr:write("mdical-build: " .. err .. "\n")
+  end
+  say("%-11s %d written, %d unchanged, %d removed, %d left alone (not ours)",
+    dir_name, stats.written, stats.unchanged, stats.removed, stats.kept_unknown)
+end
+
+if opts.dry_run then
+  say("dry run: nothing was written")
+  os.exit(0)
+end
+
+vdir.ensure(opts.state)
+local written, err = state.write(state_path, { version = 1, counts = counts, uids = emitted })
+if not written then
+  io.stderr:write(("mdical-build: could not write %s: %s\n"):format(state_path, tostring(err)))
+  os.exit(1)
+end
+
+--- A container that has been down a week should be noticed. Nothing else will
+--- notice for you.
+if opts.healthcheck then
+  os.execute(("curl -fsS -m 10 %q >/dev/null 2>&1"):format(opts.healthcheck))
+end
+
+os.exit(0)
