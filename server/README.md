@@ -56,7 +56,7 @@ Clone over HTTPS the first time because there is no key yet. Once bootstrap has
 made one, `run.sh` pulls mdical over `github-mdical`, so switch the remote after:
 
 ```
-sudo -u cal git -C /opt/cal/mdical remote set-url origin git@github-mdical:oliver-hughes/mdical.git
+sudo -H -u cal git -C /opt/cal/mdical remote set-url origin git@github-mdical:oliver-hughes/mdical.git
 ```
 
 ## 3. tailscale
@@ -64,9 +64,14 @@ sudo -u cal git -C /opt/cal/mdical remote set-url origin git@github-mdical:olive
 ```
 curl -fsSL https://tailscale.com/install.sh | sh
 tailscale up
-tailscale serve --bg https / http://localhost:5232
+tailscale serve --bg 5232        # or: tailscale serve --bg https / http://localhost:5232
 tailscale serve status
 ```
+
+**The `serve` syntax has changed more than once** and this is the line I am least
+sure of - check `tailscale serve --help` on whatever version installs rather than
+trusting either form here. What it has to end up doing is proxying HTTPS on the
+tailnet name to `http://localhost:5232`.
 
 `serve` needs **MagicDNS and HTTPS certificates** enabled for the tailnet in the
 admin console, or it has no certificate to provision and fails with nothing much
@@ -112,8 +117,8 @@ is the way to see the ratchet advance a date rather than close a task.
 ## 6. the first run
 
 ```
-sudo -u cal /opt/cal/mdical/server/run.sh --dry-run --verbose
-sudo -u cal /opt/cal/mdical/server/run.sh --verbose
+sudo -H -u cal /opt/cal/mdical/server/run.sh --dry-run --verbose
+sudo -H -u cal /opt/cal/mdical/server/run.sh --verbose
 ```
 
 The dry run does the two reads and no writes: no git, no vdirsyncer, and both
@@ -166,8 +171,8 @@ ordered so that repeating them is a no-op rather than a loss.
 
 **The build refused to publish.** The count-drop gate saw the item count fall
 sharply against the last run, which is what one bad parse looks like. Nothing was
-changed. Look at `mdical-build --vault /opt/cal/vault --dry-run --verbose` first;
-`--force` publishes anyway once you know why.
+changed. Look at `mdical-build --vault /opt/cal/vault/brain --dry-run --verbose`
+first; `--force` publishes anyway once you know why.
 
 **A note "changed underneath us".** Ingest plans a line and then re-checks it
 before writing. That message means the bytes moved in between, so it wrote

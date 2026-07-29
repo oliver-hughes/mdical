@@ -116,7 +116,7 @@ step "deploy keys"
 # read-write (the ratchet pushes markdown back), mdical's only needs read.
 for name in vault mdical; do
   key="$CAL_ROOT/.ssh/id_$name"
-  [ -f "$key" ] || sudo -u cal ssh-keygen -t ed25519 -N "" -C "cal@$(hostname)-$name" -f "$key" -q
+  [ -f "$key" ] || sudo -H -u cal ssh-keygen -t ed25519 -N "" -C "cal@$(hostname)-$name" -f "$key" -q
 done
 
 if [ ! -f "$CAL_ROOT/.ssh/config" ]; then
@@ -159,8 +159,8 @@ install -o cal -g cal -m 0644 "$MDICAL/server/vdirsyncer.config" "$CAL_ROOT/.con
 step "the vault"
 if [ -d "$CAL_ROOT/vault/.git" ]; then
   echo "already cloned"
-elif sudo -u cal git ls-remote "$VAULT_REMOTE" >/dev/null 2>&1; then
-  sudo -u cal git clone --quiet "$VAULT_REMOTE" "$CAL_ROOT/vault"
+elif sudo -H -u cal git ls-remote "$VAULT_REMOTE" >/dev/null 2>&1; then
+  sudo -H -u cal git clone --quiet "$VAULT_REMOTE" "$CAL_ROOT/vault"
   echo "cloned"
   # The repo root is not the vault. It holds brain/, main/ and ops/ side by side,
   # and pointing the scanner at the root would read all three.
@@ -184,7 +184,7 @@ step "vdirsyncer discover"
 # `discover` prompts to confirm creating collections and there is no flag for
 # non-interactive, so answer it. The collections already exist from step 5, so
 # there is nothing for it to create - this only writes the status files.
-sudo -u cal sh -c 'yes | vdirsyncer discover' || {
+sudo -H -u cal sh -c 'yes | vdirsyncer discover' || {
   echo "discover failed - check $CAL_ROOT/.config/vdirsyncer/config" >&2
   exit 1
 }
@@ -211,6 +211,6 @@ Left to do by hand, both in README.md:
 
 Then a first run you can watch:
 
-  sudo -u cal $MDICAL/server/run.sh --dry-run --verbose
-  sudo -u cal $MDICAL/server/run.sh --verbose
+  sudo -H -u cal $MDICAL/server/run.sh --dry-run --verbose
+  sudo -H -u cal $MDICAL/server/run.sh --verbose
 EOF
