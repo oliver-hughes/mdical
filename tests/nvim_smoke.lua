@@ -63,6 +63,19 @@ local line4 = vim.api.nvim_buf_get_lines(buf, 3, 4, false)[1]
 check(line4:sub(by_line[3].col + 1, by_line[3].end_col) == "<2026-09-01 Fri>", "span maps onto the text",
   line4:sub(by_line[3].col + 1, by_line[3].end_col))
 
+print("\n== lint: bracket style on keywords ==")
+local brackets = buffer("/tmp/mdical-brackets.md", {
+  "- [ ] a task DEADLINE: [2026-09-01 Tue]",
+  "- [x] done <2026-08-01 Sat> CLOSED: <2026-09-01 Tue>",
+})
+lint.buffer(brackets, cfg)
+local bd = vim.diagnostic.get(brackets, { namespace = lint.namespace })
+check(#bd == 2, "both bracket-style problems reported", #bd)
+check(bd[1].code == "inactive-keyword-timestamp" and bd[1].user_data.fixit.text == "<2026-09-01 Tue>",
+  "DEADLINE: [..] offers an active fixit", bd[1].code)
+check(bd[2].code == "active-closed" and bd[2].user_data.fixit.text == "[2026-09-01 Tue]",
+  "CLOSED: <..> offers an inactive fixit", bd[2].code)
+
 print("\n== lint: disabling a code ==")
 lint.buffer(buf, { scope = cfg.scope, lint = { disable = { "org-priority" } } })
 local kept = vim.diagnostic.get(buf, { namespace = lint.namespace })

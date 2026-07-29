@@ -248,12 +248,26 @@ function M.line(line)
             else
               local ts = take(g)
               if ts then
-                if name == "DEADLINE" then
+                if name == "CLOSED" then
+                  -- org writes CLOSED: with an inactive timestamp, because it
+                  -- records something rather than scheduling it. Still read an
+                  -- active one - the completion date is what `.+` needs - but
+                  -- say so.
+                  if ts.active then
+                    diag(M.WARN, "active-closed", "CLOSED: takes [...] - it records a date, it is not an entry",
+                      ts.span.s, ts.span.e, { s = ts.span.s, e = ts.span.e, text = fmt.timestamp(ts, { brackets = "[" }) })
+                  end
+                  p.closed = ts
+                elseif not ts.active then
+                  -- `[...]` is deliberately not an entry, so a planning keyword
+                  -- holding one promotes nothing.
+                  diag(M.WARN, "inactive-keyword-timestamp",
+                    ("%s: needs <...> - [...] is deliberately not an entry"):format(name), ts.span.s, ts.span.e,
+                    { s = ts.span.s, e = ts.span.e, text = fmt.timestamp(ts, { brackets = "<" }) })
+                elseif name == "DEADLINE" then
                   deadline = ts
                 elseif name == "SCHEDULED" then
                   p.scheduled = ts
-                elseif name == "CLOSED" then
-                  p.closed = ts
                 end
               end
               pos = g.e + 1
