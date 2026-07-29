@@ -89,17 +89,21 @@ step "the cal user and the layout"
 id -u cal >/dev/null 2>&1 || useradd --system --home-dir "$CAL_ROOT" --shell /usr/sbin/nologin cal
 
 install -d -o cal -g cal -m 0755 "$CAL_ROOT" "$CAL_ROOT/vdir" "$CAL_ROOT/state"
-# This checkout was cloned by you, as root, before bootstrap could exist to do it.
-# run.sh pulls it as `cal` every night, so without this every single run fails to
-# fast-forward, marks itself degraded, and never pings the healthcheck.
-if [ -d "$MDICAL/.git" ]; then
-  chown -R cal:cal "$MDICAL"
-fi
 install -d -o cal -g cal -m 0755 "$CAL_ROOT/vdir/cal-events" "$CAL_ROOT/vdir/cal-tasks"
 install -d -o cal -g cal -m 0700 "$CAL_ROOT/secrets" "$CAL_ROOT/.ssh"
 install -d -o cal -g cal -m 0755 "$CAL_ROOT/.config/vdirsyncer"
 install -d -o cal -g cal -m 0750 /var/lib/radicale /var/lib/radicale/collections
 install -d -m 0755 /etc/radicale
+
+# Everything under /opt/cal belongs to cal, and this repairs whatever does not.
+# Two ways it gets out of step: the mdical checkout is cloned by hand as root
+# before bootstrap exists to do it, and anything run as root leaves root-owned
+# files behind - state/run.lock being the one that then fails with a bare
+# "Permission denied" and no hint as to why.
+#
+# Cheap, idempotent, and the thing to reach for whenever the nightly run starts
+# failing on a file it used to be able to write.
+chown -R cal:cal "$CAL_ROOT"
 
 # --------------------------------------------------------------- 3  the secret
 

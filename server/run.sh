@@ -128,7 +128,21 @@ fi
 # One run at a time. The timer fires on a schedule and a slow run must not have
 # a second one start underneath it - two builds writing one vdir is exactly the
 # half-written state the temp-file-plus-rename rule exists to avoid.
-mkdir -p "$STATE"
+mkdir -p "$STATE" || die "cannot create $STATE - who owns $CAL_ROOT?"
+
+# A root-owned leftover here is the classic one: something ran as root before the
+# privilege guard above existed, created the lock, and now cal cannot reopen it.
+# Left to itself that surfaces as "Permission denied" against a line number, which
+# says nothing about the cause or the cure.
+for path in "$STATE/run.lock" "$STATE"; do
+  if [ -e "$path" ] && [ ! -w "$path" ]; then
+    die "$path is not writable by $(id -un) (owner: $(stat -c %U "$path" 2>/dev/null || echo unknown)).
+  Something ran as root before. Fix it with:
+
+    chown -R $CAL_AS:$CAL_AS $CAL_ROOT"
+  fi
+done
+
 exec 9>"$STATE/run.lock"
 flock -n 9 || { log "another run holds the lock - nothing to do"; exit 0; }
 
