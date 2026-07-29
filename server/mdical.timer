@@ -1,16 +1,39 @@
 [Unit]
-Description=mdical nightly run
+Description=mdical run: every five minutes through the day
 
 [Timer]
-# 03:17 rather than 03:00: distinctive in a log, and not sharing a minute with
-# every other cron job in the house.
-OnCalendar=*-*-* 03:17:00
+# Every five minutes from 08:00, plus one final run at 21:00. The `00/5` minute
+# repetition ends at 20:55, so without the second line the window would close
+# five minutes shy of nine; multiple OnCalendar lines are additive. 157 runs a
+# day, and nothing between 21:00 and 08:00 - see the note in README about what
+# that means for the healthcheck.
+#
+# Five minutes rather than fifteen, even though iOS fetches on its own schedule
+# at best every fifteen: a manual pull-to-refresh bypasses that and shows
+# whatever the *server* last built, so the shorter cadence is what makes "yank
+# down in Calendar and see the marker I just pushed" work.
+#
+# It is affordable because a run with nothing to do is a genuine no-op.
+# Byte-identical resources are left untouched (vdir.sync), so vdirsyncer has
+# nothing to upload, and run.sh makes no commit when the vault is unchanged.
+# The build itself is 0.26s of CPU over 39k lines of vault.
+OnCalendar=*-*-* 08..20:00/5
+OnCalendar=*-*-* 21:00:00
 
-# The reason this is a timer and not a cron line. A container that was off at
-# 03:17 runs as soon as it comes back, so a day of completions is not silently
-# skipped.
+# The reason this is a timer and not a cron line: a container that was off across
+# a trigger runs as soon as it comes back rather than silently skipping the
+# completions it missed. It also makes the first run after a boot immediate.
 Persistent=true
-RandomizedDelaySec=300
+
+# The default accuracy is a minute, which on a five-minute cadence means the real
+# interval wanders between four and six. Harmless, but it makes the journal hard
+# to read against the clock.
+AccuracySec=30s
+
+# No RandomizedDelaySec. It existed so the nightly run did not share a minute
+# with every other cron job in the house, which stopped mattering at 157 runs a
+# day - and 300s of jitter on a 5-minute timer makes the cadence a fiction.
+# `flock` in run.sh is what actually guards against two runs overlapping.
 
 [Install]
 WantedBy=timers.target

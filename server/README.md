@@ -161,8 +161,36 @@ journalctl -u radicale -f              what the phone is asking for
 ```
 
 `Persistent=true` on the timer is the reason it is a timer and not a cron line: a
-container that was off at 03:17 runs as soon as it comes back, rather than
-silently skipping a day of completions.
+container that was off across a trigger runs as soon as it comes back, rather than
+silently skipping the completions it missed.
+
+## cadence
+
+**Every five minutes between 08:00 and 21:00**, and nothing overnight. 157 runs a
+day, which is affordable only because a run with nothing to do is a real no-op:
+byte-identical resources are left untouched, so vdirsyncer uploads nothing and
+there is no commit. The build is 0.26s of CPU over a 39k-line vault.
+
+Five rather than fifteen even though iOS fetches at best every fifteen minutes,
+because pull-to-refresh bypasses the phone's own interval and shows whatever the
+server last built. The shorter cadence is what makes a manual refresh useful.
+
+**Deliberately not gated on "did GitHub change".** Half the input arrives from the
+phone, as a tick in radicale that produces no commit anywhere - so a run gated on
+new commits would never ingest a completion until you happened to push from the
+laptop. That is the ratchet broken by the optimisation meant to protect it.
+
+**The overnight gap and `HEALTHCHECK` interact.** Nothing runs between 21:00 and
+08:00, so the grace period on the dead man's switch has to exceed eleven hours or
+it goes red every night. If you would rather have fast detection than a quiet
+night, add an hourly line outside the window:
+
+```ini
+OnCalendar=*-*-* 00..07,21..23:00:00
+```
+
+That caps the longest gap at an hour, so a two-hour grace works round the clock
+and a dead container is noticed the same morning.
 
 ## the order, and why it is the order
 
