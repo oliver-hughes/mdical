@@ -60,6 +60,12 @@ step "the cal user and the layout"
 id -u cal >/dev/null 2>&1 || useradd --system --home-dir "$CAL_ROOT" --shell /usr/sbin/nologin cal
 
 install -d -o cal -g cal -m 0755 "$CAL_ROOT" "$CAL_ROOT/vdir" "$CAL_ROOT/state"
+# This checkout was cloned by you, as root, before bootstrap could exist to do it.
+# run.sh pulls it as `cal` every night, so without this every single run fails to
+# fast-forward, marks itself degraded, and never pings the healthcheck.
+if [ -d "$MDICAL/.git" ]; then
+  chown -R cal:cal "$MDICAL"
+fi
 install -d -o cal -g cal -m 0755 "$CAL_ROOT/vdir/cal-events" "$CAL_ROOT/vdir/cal-tasks"
 install -d -o cal -g cal -m 0700 "$CAL_ROOT/secrets" "$CAL_ROOT/.ssh"
 install -d -o cal -g cal -m 0755 "$CAL_ROOT/.config/vdirsyncer"
@@ -156,6 +162,9 @@ if [ -d "$CAL_ROOT/vault/.git" ]; then
 elif sudo -u cal git ls-remote "$VAULT_REMOTE" >/dev/null 2>&1; then
   sudo -u cal git clone --quiet "$VAULT_REMOTE" "$CAL_ROOT/vault"
   echo "cloned"
+  # The repo root is not the vault. It holds brain/, main/ and ops/ side by side,
+  # and pointing the scanner at the root would read all three.
+  [ -d "$CAL_ROOT/vault/brain" ] || todo "no brain/ in the checkout - set VAULT in $CAL_ROOT/cal.env"
 else
   todo "add this as a read-WRITE deploy key on the vault repo, then re-run:"
   echo

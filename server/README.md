@@ -7,7 +7,10 @@ done without a browser or a phone in your hand; this is the rest, in order.
 ```
 /opt/cal/
   mdical/          this repo, read-only deploy key
-  vault/           your notes, read-WRITE deploy key
+  vault/           oliver-hughes/vaults, read-WRITE deploy key
+    brain/         <- the directory actually scanned
+    main/          } present in the repo, deliberately not scanned
+    ops/           }
   vdir/
     cal-events/    .ics files, one per VEVENT
     cal-tasks/     .ics files, one per VTODO
@@ -89,7 +92,24 @@ so fix it there, then **delete the account and add it again**.
 CalDAV on iOS is fetch, not push. Most "it didn't sync" is an unfetched account:
 pull to refresh.
 
-## 5. the first run
+## 5. put at least one marker in the vault
+
+The vault has **no markers in it at all** right now - 1,821 checkbox lines and not
+one of them exports, which is the promotion rule working as designed. So the first
+run will publish an empty calendar and there will be nothing on the phone to look
+at, which is indistinguishable from a broken setup.
+
+Write a couple in `brain/` before the first run, so there is something to see:
+
+```markdown
+- [ ] pay rent <2026-08-01 Sat +1m>
+<2026-08-05 Wed 15:00-16:00> standup
+```
+
+The `+1m` one is worth having: it exercises expansion, and ticking it on the phone
+is the way to see the ratchet advance a date rather than close a task.
+
+## 6. the first run
 
 ```
 sudo -u cal /opt/cal/mdical/server/run.sh --dry-run --verbose
@@ -98,7 +118,10 @@ sudo -u cal /opt/cal/mdical/server/run.sh --verbose
 
 The dry run does the two reads and no writes: no git, no vdirsyncer, and both
 binaries in `--dry-run`. It is the cheap way to find out that the vault clone or
-the scope tags are wrong before anything is published.
+the scope tags are wrong before anything is published. Check the marker count in
+its output before going further - `emitting 0 tasks and 0 events` means the scan
+found nothing, and the usual cause is `VAULT` pointing at the repo root or at the
+wrong subdirectory.
 
 `--no-sync` skips vdirsyncer, for when you want to test the build alone.
 

@@ -33,7 +33,11 @@ CONFIG="${CAL_CONFIG:-/opt/cal/cal.env}"
 [ -f "$CONFIG" ] && . "$CONFIG"
 
 CAL_ROOT="${CAL_ROOT:-/opt/cal}"
-VAULT="${VAULT:-$CAL_ROOT/vault}"
+# The git checkout, and the directory inside it that mdical actually scans. They
+# are not the same thing: oliver-hughes/vaults holds `brain`, `main` and `ops`
+# side by side, so pointing the scanner at the repo root would read all three.
+VAULT_REPO="${VAULT_REPO:-$CAL_ROOT/vault}"
+VAULT="${VAULT:-$VAULT_REPO/brain}"
 MDICAL="${MDICAL:-$CAL_ROOT/mdical}"
 VDIR="${VDIR:-$CAL_ROOT/vdir}"
 STATE="${STATE:-$CAL_ROOT/state}"
@@ -71,7 +75,8 @@ die()  { printf '%s  FAIL %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; exit 1; }
 for tool in git luajit vdirsyncer; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
-[ -d "$VAULT/.git" ] || die "$VAULT is not a git checkout"
+[ -d "$VAULT_REPO/.git" ] || die "$VAULT_REPO is not a git checkout"
+[ -d "$VAULT" ] || die "$VAULT does not exist - is VAULT pointing inside the checkout?"
 [ -x "$MDICAL/bin/mdical-build" ] || die "$MDICAL/bin/mdical-build is not executable"
 
 # One run at a time. The timer fires on a schedule and a slow run must not have
@@ -106,7 +111,7 @@ else
   # --autostash because the previous run may have left the tree dirty if it died
   # between writing markdown and committing. Without it the pull refuses and the
   # ratchet is stuck for ever.
-  git -C "$VAULT" pull --rebase --autostash || die "could not pull the vault - resolve it by hand"
+  git -C "$VAULT_REPO" pull --rebase --autostash || die "could not pull the vault - resolve it by hand"
 
   # mdical too, so a parser fix reaches the box the same night. --ff-only, since
   # anything else means somebody has been editing the checkout on the server.
@@ -115,7 +120,7 @@ else
   fi
 fi
 
-VAULT_REV="$(git -C "$VAULT" rev-parse --short HEAD)"
+VAULT_REV="$(git -C "$VAULT_REPO" rev-parse --short HEAD)"
 MDICAL_REV="$(git -C "$MDICAL" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 log "vault at $VAULT_REV, mdical at $MDICAL_REV"
 
@@ -146,29 +151,33 @@ fi
 step "5  commit and push the completions"
 if [ -n "$DRY_RUN" ]; then
   log "skipping git commit (--dry-run)"
-elif [ -z "$(git -C "$VAULT" status --porcelain)" ]; then
+elif [ -z "$(git -C "$VAULT_REPO" status --porcelain -- "$VAULT")" ]; then
   log "nothing changed in the vault"
 else
-  git -C "$VAULT" add -A
+  # Scoped to $VAULT, which is the only place ingest writes. The repo holds other
+  # vaults beside this one, and a nightly job that swept up whatever you happened
+  # to have uncommitted elsewhere - under a message about phone completions - would
+  # be a genuinely unpleasant surprise.
+  git -C "$VAULT_REPO" add -A -- "$VAULT"
   {
     printf 'cal: completions from the phone\n\n'
     grep -E '^  [^ ].*:[0-9]+ ' "$ingest_log" || true
   } > "$ingest_log.msg"
 
-  git -C "$VAULT" \
+  git -C "$VAULT_REPO" \
     -c "user.name=$GIT_NAME" -c "user.email=$GIT_EMAIL" \
     commit -q -F "$ingest_log.msg" || die "could not commit - refusing to build on top of it"
   rm -f "$ingest_log.msg"
-  log "committed $(git -C "$VAULT" rev-parse --short HEAD)"
+  log "committed $(git -C "$VAULT_REPO" rev-parse --short HEAD)"
 
   pushed=
   for attempt in $(seq 1 "$PUSH_ATTEMPTS"); do
-    if git -C "$VAULT" push --quiet; then
+    if git -C "$VAULT_REPO" push --quiet; then
       pushed=1
       break
     fi
     log "push rejected (attempt $attempt) - rebasing onto the remote and retrying"
-    git -C "$VAULT" pull --rebase --autostash || break
+    git -C "$VAULT_REPO" pull --rebase --autostash || break
   done
   # Deliberately not fatal. The commit is durable, so the completion is recorded
   # and will not be applied twice; only the laptop is behind, and the next run
