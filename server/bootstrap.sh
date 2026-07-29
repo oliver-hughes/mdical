@@ -33,6 +33,26 @@ VAULT_REMOTE="${VAULT_REMOTE:-git@github-vault:oliver-hughes/vaults.git}"
 step() { printf '\n== %s\n' "$*"; }
 todo() { printf '\n-- TODO %s\n' "$*"; }
 
+# Run a command as the cal user.
+#
+# Not plain `sudo`: a minimal Debian LXC template does not ship it, and bootstrap
+# runs as root so nothing here needed it until the deploy keys. `runuser` is
+# util-linux and is always present.
+#
+# HOME is set explicitly because neither tool sets it for a non-login invocation.
+# Without it `vdirsyncer discover` reads /root/.config and `git clone` uses root's
+# ssh keys, both of which fail in a way that does not mention the home directory.
+as_cal() {
+  if command -v runuser >/dev/null 2>&1; then
+    runuser -u cal -- env HOME="$CAL_ROOT" "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo -H -u cal "$@"
+  else
+    echo "bootstrap.sh: neither runuser nor sudo is available" >&2
+    return 1
+  fi
+}
+
 # ------------------------------------------------------------------ 1  packages
 
 step "packages"
@@ -41,7 +61,10 @@ apt-get update -qq
 # luajit runs the build; apache2-utils is only for htpasswd -B; curl for
 # MKCALENDAR and the healthcheck. No luarocks and no lpeg: the parser uses plain
 # lua patterns, so there is no C dependency to build in here.
-apt-get install -y -qq git curl pipx luajit apache2-utils
+# sudo is not in a minimal LXC template. bootstrap does not need it - it uses
+# runuser - but the runbook's manual commands do, and so does anyone who ever logs
+# in to look at this box.
+apt-get install -y -qq git curl pipx luajit apache2-utils sudo
 
 step "radicale and vdirsyncer"
 # Installed to /usr/local/bin rather than root's ~/.local/bin, so a service
@@ -132,7 +155,7 @@ step "deploy keys"
 # read-write (the ratchet pushes markdown back), mdical's only needs read.
 for name in vault mdical; do
   key="$CAL_ROOT/.ssh/id_$name"
-  [ -f "$key" ] || sudo -H -u cal ssh-keygen -t ed25519 -N "" -C "cal@$(hostname)-$name" -f "$key" -q
+  [ -f "$key" ] || as_cal ssh-keygen -t ed25519 -N "" -C "cal@$(hostname)-$name" -f "$key" -q
 done
 
 if [ ! -f "$CAL_ROOT/.ssh/config" ]; then
@@ -175,8 +198,8 @@ install -o cal -g cal -m 0644 "$MDICAL/server/vdirsyncer.config" "$CAL_ROOT/.con
 step "the vault"
 if [ -d "$CAL_ROOT/vault/.git" ]; then
   echo "already cloned"
-elif sudo -H -u cal git ls-remote "$VAULT_REMOTE" >/dev/null 2>&1; then
-  sudo -H -u cal git clone --quiet "$VAULT_REMOTE" "$CAL_ROOT/vault"
+elif as_cal git ls-remote "$VAULT_REMOTE" >/dev/null 2>&1; then
+  as_cal git clone --quiet "$VAULT_REMOTE" "$CAL_ROOT/vault"
   echo "cloned"
   # The repo root is not the vault. It holds brain/, main/ and ops/ side by side,
   # and pointing the scanner at the root would read all three.
@@ -200,7 +223,7 @@ step "vdirsyncer discover"
 # `discover` prompts to confirm creating collections and there is no flag for
 # non-interactive, so answer it. The collections already exist from step 5, so
 # there is nothing for it to create - this only writes the status files.
-sudo -H -u cal sh -c 'yes | vdirsyncer discover' || {
+as_cal sh -c 'yes | vdirsyncer discover' || {
   echo "discover failed - check $CAL_ROOT/.config/vdirsyncer/config" >&2
   exit 1
 }
