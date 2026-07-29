@@ -1,8 +1,9 @@
---- The date picker's entries.
+--- The date stage's entries. Pure - only `mdical.date` - so it tests like
+--- anything else here.
 ---
---- Twelve precomputed relative dates plus free text. No date *parsing* in the
---- first cut beyond the free-text case, which reuses the timestamp grammar
---- itself - so `2026-08-01 14:00 +1m` typed by hand just works.
+--- Sixteen precomputed relative dates plus free text. No date *parsing* beyond
+--- the free-text case, which reuses the timestamp grammar itself, so
+--- `2026-08-01 14:00 +1m` typed by hand just works.
 ---
 --- Every label carries its resolved date and day name, which is most of the
 --- point: hand-typing ISO dates and day names is the fastest way to end up
@@ -12,19 +13,12 @@ local date = require("mdical.date")
 
 local M = {}
 
---- The coming `target` weekday, strictly after `from`.
---- @param target integer 0 = Sunday, per date.dow
-local function coming(from, target)
-  local delta = (target - date.dow(from)) % 7
-  return date.add_days(from, delta == 0 and 7 or delta)
-end
-
 local function end_of_month(d)
   return { year = d.year, month = d.month, day = date.days_in_month(d.year, d.month) }
 end
 
 --- @param today table|nil date, injected by the tests
---- @return table[] entries  { label = "+1w", date = <date> }
+--- @return table[] entries  { label = "1w", date = <date> }
 function M.entries(today)
   today = today or date.today()
   local e = {}
@@ -34,16 +28,20 @@ function M.entries(today)
 
   add("today", today)
   add("tomorrow", date.add_days(today, 1))
-  add("mon", coming(today, 1))
-  add("fri", coming(today, 5))
-  add("sat", coming(today, 6))
-  add("+1w", date.add(today, 1, "w"))
-  add("+2w", date.add(today, 2, "w"))
-  add("+3w", date.add(today, 3, "w"))
-  add("+1m", date.add(today, 1, "m"))
-  add("+3m", date.add(today, 3, "m"))
+  -- the next six days by name, so "sat" is one keystroke away and it is obvious
+  -- which saturday it means. Deliberately overlaps `tomorrow`.
+  for i = 1, 6 do
+    local d = date.add_days(today, i)
+    add(date.dayname(d):lower(), d)
+  end
+  add("1w", date.add(today, 1, "w"))
+  add("2w", date.add(today, 2, "w"))
+  add("3w", date.add(today, 3, "w"))
+  add("1m", date.add(today, 1, "m"))
+  add("2m", date.add(today, 2, "m"))
+  add("3m", date.add(today, 3, "m"))
   add("end of month", end_of_month(today))
-  add("+1y", date.add(today, 1, "y"))
+  add("1y", date.add(today, 1, "y"))
   return e
 end
 

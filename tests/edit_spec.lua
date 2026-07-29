@@ -117,6 +117,42 @@ describe("edit: hand-typed timestamps", function()
   end)
 end)
 
+describe("edit.cursor_col", function()
+  -- The cursor lands on the closing `>`, so `i` opens insert mode just inside
+  -- it - which is how a time or a repeater gets added by hand afterwards.
+  local function lands_on(line, opts)
+    local p = parse.line(line)
+    local text = (opts and opts.timestamp) or require("mdical.fmt").new_timestamp(D, edit.target(p))
+    local edits = edit.date_edits(p, text, opts and opts.ensure_task)
+    local out = edit.apply(p.text, edits)
+    local col = edit.cursor_col(edits)
+    return out:sub(col, col), out, col
+  end
+
+  it("lands on the closing bracket when appending", function()
+    eq(lands_on("- [ ] buy milk"), ">", "task line")
+    eq(lands_on("buy milk"), ">", "plain line")
+    eq(lands_on("- [ ] buy milk   "), ">", "trailing whitespace stripped first")
+  end)
+
+  it("lands on the closing bracket when re-dating in place", function()
+    eq(lands_on("- [ ] pay rent <2026-08-01 Sat +1m>"), ">", "cookies kept, so the text got longer")
+    eq(lands_on("<2026-08-01 Sat> team offsite"), ">", "marker mid-line")
+    eq(lands_on("- [ ] chase the plumber <>"), ">", "replacing `<>`, which got longer")
+  end)
+
+  it("accounts for a checkbox inserted before it", function()
+    eq(lands_on("buy milk", { ensure_task = true }), ">", "list marker and checkbox added")
+    eq(lands_on("- buy milk", { ensure_task = true }), ">", "checkbox added")
+    eq(lands_on("    - buy milk", { ensure_task = true }), ">", "indented")
+  end)
+
+  it("points at the last character of the line when the marker is at the end", function()
+    local _, out, col = lands_on("- [ ] buy milk")
+    eq(col, #out, "so `i` is inside the brackets and `a` is after them")
+  end)
+end)
+
 describe("edit.fixits", function()
   it("corrects org's priority cookie", function()
     local p = parse.line("- [ ] [#A] old habit <2026-09-01 Tue>")

@@ -108,16 +108,30 @@ vim.notify = function(msg)
   notified = msg
 end
 
--- pick a labelled entry
-local function pick(label)
+-- answer each successive vim.ui.select with the label at that index
+local function answer(...)
+  local wanted = { ... }
+  local stage = 0
   vim.ui.select = function(items, _, on_choice)
+    stage = stage + 1
+    local want = wanted[math.min(stage, #wanted)]
     for _, item in ipairs(items) do
-      if item.label == label then
+      if item.label == want then
         return on_choice(item)
       end
     end
-    error("no entry labelled " .. label)
+    error(("stage %d: no entry labelled %s"):format(stage, tostring(want)))
   end
+end
+
+local function pick(label)
+  answer(label)
+end
+
+local function cursor_char()
+  local pos = vim.api.nvim_win_get_cursor(0)
+  local line = vim.api.nvim_get_current_line()
+  return line:sub(pos[2] + 1, pos[2] + 1)
 end
 
 local function line_after(text, fn)
@@ -146,6 +160,108 @@ check(line_after("## a heading", function()
   insert.insert({ ensure_task = true })
 end) == ("## a heading <%s>"):format(today), "heading gets a date only")
 check(notified and notified:match("heading"), "and it says why", notified)
+
+print("\n== insert: where the cursor ends up ==")
+pick("today")
+line_after("- [ ] buy milk", function()
+  insert.insert({})
+end)
+check(cursor_char() == ">", "cursor lands on the closing bracket", cursor_char())
+line_after("buy milk", function()
+  insert.insert({ ensure_task = true })
+end)
+check(cursor_char() == ">", "...even with a checkbox inserted ahead of it", cursor_char())
+line_after("- [ ] pay rent <2026-08-01 Sat +1m>", function()
+  insert.insert({})
+end)
+check(cursor_char() == ">", "...and when re-dating in place", cursor_char())
+
+print("\n== the date list ==")
+local dates = require("mdical.nvim.dates")
+local shown = {}
+for _, e in ipairs(dates.entries()) do
+  shown[#shown + 1] = e.label
+end
+check(#shown == 16, "sixteen dates offered", #shown)
+pick("sat")
+local sat = line_after("- [ ] on saturday", function()
+  insert.insert({})
+end)
+check(sat:match("Sat>$") ~= nil, "picking a day name gives that day", sat)
+
+print("\n== build: date, time, cookies ==")
+check(line_after("- [ ] pay rent", function()
+  answer("today", "9am", "+1m")
+  insert.build({})
+end) == ("- [ ] pay rent <%s 09:00 +1m>"):format(today), "all three stages")
+check(cursor_char() == ">", "cursor still lands on the bracket", cursor_char())
+
+local tmrw = date.add_days(date.today(), 1)
+local tomorrow = date.iso(tmrw) .. " " .. date.dayname(tmrw)
+check(line_after("standup", function()
+  answer("tomorrow", "none", "none")
+  insert.build({ ensure_task = true })
+end) == ("- [ ] standup <%s>"):format(tomorrow), "build-task, with nothing optional chosen")
+
+check(line_after("- [ ] water the plants", function()
+  answer("today", "none", ".+3d")
+  insert.build({})
+end) == ("- [ ] water the plants <%s .+3d>"):format(today), "a completion-relative repeater")
+
+check(line_after("- [ ] renew car insurance", function()
+  answer("today", "none", "+1y -21d")
+  insert.build({})
+end) == ("- [ ] renew car insurance <%s +1y -21d>"):format(today), "a repeater and a warning together")
+
+-- build replaces outright: "none" means none, not "keep what was there"
+check(line_after("- [ ] pay rent <2026-08-01 Sat 09:00 +1m>", function()
+  answer("today", "none", "none")
+  insert.build({})
+end) == ("- [ ] pay rent <%s>"):format(today), "build replaces rather than merging")
+
+print("\n== build: free text at each stage ==")
+answer("today", "time…", "cookies…")
+vim.ui.input = function(opts, on_confirm)
+  on_confirm(opts.prompt:match("^time") and "930-1015" or "++2w")
+end
+check(line_after("- [ ] planning", function()
+  insert.build({})
+end) == ("- [ ] planning <%s 09:30-10:15 ++2w>"):format(today), "a forgiving time and a hand-typed cookie")
+
+answer("today", "time…", "none")
+vim.ui.input = function(_, on_confirm)
+  on_confirm("half nine")
+end
+notified = nil
+check(line_after("- [ ] bad time", function()
+  insert.build({})
+end) == "- [ ] bad time", "an unparseable time changes nothing")
+check(notified and notified:match("not a time"), "and says so", notified)
+
+answer("today", "none", "cookies…")
+vim.ui.input = function(_, on_confirm)
+  on_confirm("+1z")
+end
+notified = nil
+check(line_after("- [ ] bad cookie", function()
+  insert.build({})
+end) == "- [ ] bad cookie", "an unparseable cookie changes nothing")
+check(notified and notified:match("unrecognised"), "and says why", notified)
+
+print("\n== build: cancelling at any stage ==")
+for stage = 1, 3 do
+  local seen = 0
+  vim.ui.select = function(items, _, on_choice)
+    seen = seen + 1
+    if seen == stage then
+      return on_choice(nil)
+    end
+    return on_choice(items[1])
+  end
+  check(line_after("- [ ] untouched", function()
+    insert.build({})
+  end) == "- [ ] untouched", "cancelling at stage " .. stage .. " changes nothing")
+end
 
 -- cancelling changes nothing
 vim.ui.select = function(_, _, on_choice)
@@ -189,6 +305,15 @@ pick("today")
 check(line_after("- [ ] via the command", function()
   vim.cmd("Mdical insert")
 end) == ("- [ ] via the command <%s>"):format(today), ":Mdical insert")
+answer("today", "9am", "+1w")
+check(line_after("- [ ] via the builder", function()
+  vim.cmd("Mdical build")
+end) == ("- [ ] via the builder <%s 09:00 +1w>"):format(today), ":Mdical build")
+answer("today", "none", "none")
+check(line_after("via the builder", function()
+  vim.cmd("Mdical build-task")
+end) == ("- [ ] via the builder <%s>"):format(today), ":Mdical build-task")
+
 notified = nil
 vim.cmd("Mdical nonsense")
 check(notified and notified:match("unknown command"), "unknown subcommand is reported", notified)

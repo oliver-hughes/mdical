@@ -34,6 +34,12 @@ local ACTIONS = {
   task = function()
     require("mdical.nvim.insert").insert({ ensure_task = true })
   end,
+  build = function()
+    require("mdical.nvim.insert").build({})
+  end,
+  ["build-task"] = function()
+    require("mdical.nvim.insert").build({ ensure_task = true })
+  end,
   fix = function()
     require("mdical.nvim.insert").fix()
   end,
@@ -42,7 +48,7 @@ local ACTIONS = {
   end,
 }
 
-M.subcommands = { "insert", "task", "fix", "lint" }
+M.subcommands = { "insert", "task", "build", "build-task", "fix", "lint" }
 
 function M.command(args)
   local name = args.fargs[1] or "insert"

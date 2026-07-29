@@ -28,9 +28,11 @@ lazy.nvim:
   ft = "markdown",
   opts = {},
   keys = {
-    { "<leader>cd", "<Cmd>Mdical insert<CR>", desc = "date on this line" },
-    { "<leader>ct", "<Cmd>Mdical task<CR>",   desc = "task with a deadline" },
-    { "<leader>cf", "<Cmd>Mdical fix<CR>",    desc = "fix this line" },
+    { "<leader>cd", "<Cmd>Mdical insert<CR>",     desc = "date on this line" },
+    { "<leader>ct", "<Cmd>Mdical task<CR>",       desc = "task with a deadline" },
+    { "<leader>cD", "<Cmd>Mdical build<CR>",      desc = "date, time and repeat" },
+    { "<leader>cT", "<Cmd>Mdical build-task<CR>", desc = "task, timed and repeating" },
+    { "<leader>cf", "<Cmd>Mdical fix<CR>",        desc = "fix this line" },
   },
 }
 ```
@@ -41,16 +43,53 @@ lazy.nvim:
 |--|--|
 | `:Mdical insert` | pick a date, put it on the current line. Respects the line as it stands: a bullet becomes an event, a `- [ ]` gets a deadline |
 | `:Mdical task` | the same, and adds `- [ ] ` if the line isn't a task yet |
+| `:Mdical build` | the long way round: date, then time, then repeater |
+| `:Mdical build-task` | the same, and adds `- [ ] ` |
 | `:Mdical fix` | apply the fixits the current line's diagnostics offer |
 | `:Mdical lint` | re-lint the buffer now |
+
+After any of them the cursor sits **on the closing `>`**, so `i` opens insert
+mode inside the brackets to add anything by hand.
 
 `insert` and `task` **re-date a marker in place** when the line already carries
 one, inheriting its time and cookies - so `<leader>cd` on
 `- [ ] pay rent <2026-08-01 Sat +1m>` changes the date and keeps the `+1m`,
-rather than appending a second timestamp and creating an error.
+rather than appending a second timestamp and creating an error. `build` is the
+opposite: it replaces the timestamp outright, so choosing *none* at the time or
+repeat stage means none.
 
-The picker offers twelve relative dates plus free text. Free text goes through
-the timestamp grammar itself, so `2026-08-01 14:00 +1m` typed by hand works.
+Every prompt is a `vim.ui.select`, so the keys and the look are your own
+picker's - fuzzy filtering included, which is the quick way to reach `end of
+month`. Confirm keys come from there too; if you want `<C-y>` as well as `<CR>`,
+that belongs in your picker's config rather than here.
+
+### The date stage
+
+Sixteen entries: today, tomorrow, the next six days by name, 1w/2w/3w, 1m/2m/3m,
+end of month, 1y - each showing the date and day name it resolves to - then
+`date…` for free text. Free text goes through the timestamp grammar itself, so
+`2026-08-01 14:00 +1m` typed by hand works.
+
+### The time stage
+
+`none`, five presets (7am, 9am, midday, 5pm, 9pm), then `time…`, which is
+forgiving: `9`, `930`, `9.30`, `9am`, `midday`, `1745` and `9am-5pm` all become
+something the grammar accepts. Anything that doesn't is refused before it can be
+written into a note.
+
+### The repeat stage
+
+All three of org's repeater flavours with what they actually mean, warnings on
+their own and alongside a repeater, and `cookies…` for the rest. It doubles as
+the syntax reminder for the `+1m` / `++1m` / `.+1m` distinction:
+
+```
++1m        every month - clamps, so the 31st becomes the 28th in february
+++1m       every month, catching up
+.+1m       a month after you tick it
+-21d       warn three weeks early
++1y -21d   yearly, warned three weeks early
+```
 
 ## Config
 

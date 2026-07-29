@@ -96,7 +96,7 @@ function nilly(v, what)
   end
 end
 
-local specs = { "date", "grammar", "fmt", "scope", "parse", "edit", "dates", "corpus" }
+local specs = { "date", "grammar", "fmt", "scope", "parse", "edit", "dates", "times", "cookies", "corpus" }
 for _, name in ipairs(specs) do
   local chunk = assert(loadfile(root .. "/tests/" .. name .. "_spec.lua"))
   chunk()

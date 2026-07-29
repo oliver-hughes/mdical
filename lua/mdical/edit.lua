@@ -82,6 +82,25 @@ function M.date_edits(p, ts_text, ensure_task)
   return edits, warning
 end
 
+--- Column of the **last character** of the timestamp once `edits` have been
+--- applied - the `>`, so `i` from there opens insert mode just inside it.
+---
+--- `date_edits` always puts the timestamp first, and anything else it adds is an
+--- insertion at a lower column, so the shift is just the length of those.
+--- @param edits table from M.date_edits
+--- @return integer col 1-based
+function M.cursor_col(edits)
+  local ts = edits[1]
+  local shift = 0
+  for i = 2, #edits do
+    local ed = edits[i]
+    if ed.s <= ts.s then
+      shift = shift + #ed.text - ((ed.e - ed.s) + 1)
+    end
+  end
+  return ts.s + shift + #ts.text - 1
+end
+
 --- Convenience: the whole transform, as a string. Used by the tests.
 function M.with_date(p, d, opts)
   opts = opts or {}
