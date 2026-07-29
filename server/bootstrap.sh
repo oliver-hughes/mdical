@@ -158,23 +158,29 @@ for name in vault mdical; do
   [ -f "$key" ] || as_cal ssh-keygen -t ed25519 -N "" -C "cal@$(hostname)-$name" -f "$key" -q
 done
 
-if [ ! -f "$CAL_ROOT/.ssh/config" ]; then
-  # Host aliases, because both keys talk to the same hostname and ssh would
-  # otherwise offer the wrong one first.
-  cat > "$CAL_ROOT/.ssh/config" <<'EOF'
+# Regenerated every run: it is a generated file, and an older one had `~` paths
+# that broke as soon as HOME was not cal's.
+#
+# Host aliases, because both keys talk to the same hostname and ssh would
+# otherwise offer the wrong one first.
+#
+# Absolute IdentityFile paths, not `~/.ssh/...`. A tilde expands against the
+# *running* user's home, so the moment anything invokes git with HOME pointing
+# elsewhere the key silently is not found - and even `ssh -F` on this file does not
+# save you, because the expansion happens at use.
+cat > "$CAL_ROOT/.ssh/config" <<EOF
 Host github-vault
   HostName github.com
   User git
-  IdentityFile ~/.ssh/id_vault
+  IdentityFile $CAL_ROOT/.ssh/id_vault
   IdentitiesOnly yes
 
 Host github-mdical
   HostName github.com
   User git
-  IdentityFile ~/.ssh/id_mdical
+  IdentityFile $CAL_ROOT/.ssh/id_mdical
   IdentitiesOnly yes
 EOF
-fi
 chown -R cal:cal "$CAL_ROOT/.ssh"
 chmod 0600 "$CAL_ROOT/.ssh/config"
 ssh-keyscan -t ed25519 github.com 2>/dev/null >> "$CAL_ROOT/.ssh/known_hosts" || true

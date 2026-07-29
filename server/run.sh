@@ -55,6 +55,7 @@ DRY_RUN=
 NO_SYNC=
 VERBOSE=
 PULL=
+ARGV="$*"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -87,6 +88,31 @@ trap 'printf "FAIL run.sh died at line %s with status %s\n" "$LINENO" "$?" >&2' 
 for tool in git luajit vdirsyncer; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
+
+# Running as the wrong user is quietly destructive. Git objects and note files end
+# up owned by root, and the nightly service - which runs as cal - cannot write them
+# afterwards, so the timer starts failing days later for no visible reason.
+#
+# It also means ssh reads the wrong ~/.ssh, which is how this first showed up:
+# "could not resolve hostname github-vault", because the Host alias lives in cal's
+# config and root has never heard of it.
+CAL_AS="${CAL_AS:-cal}"
+if [ "$(id -un)" != "$CAL_AS" ] && [ -z "${ALLOW_ANY_USER:-}" ]; then
+  die "run this as $CAL_AS, not $(id -un):
+
+    sudo -H -u $CAL_AS $0 $ARGV
+
+  ALLOW_ANY_USER=1 overrides, but expect root-owned files in the vault."
+fi
+
+# Find cal's ssh config wherever HOME happens to point, so the github-vault and
+# github-mdical aliases resolve regardless of how this was invoked. The config uses
+# absolute IdentityFile paths for the same reason - a `~` in there would expand
+# against whoever is running, not against cal.
+SSH_CONFIG="${SSH_CONFIG:-$CAL_ROOT/.ssh/config}"
+if [ -f "$SSH_CONFIG" ]; then
+  export GIT_SSH_COMMAND="ssh -F $SSH_CONFIG"
+fi
 [ -d "$VAULT_REPO/.git" ] || die "$VAULT_REPO is not a git checkout"
 [ -d "$VAULT" ] || die "$VAULT does not exist - is VAULT pointing inside the checkout?"
 [ -x "$MDICAL/bin/mdical-build" ] || die "$MDICAL/bin/mdical-build is not executable"
