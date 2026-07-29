@@ -2,10 +2,15 @@
 #
 # The nightly run. Notes in, calendar out, completions back.
 #
-#   run.sh                  the real thing, as the timer calls it
-#   run.sh --dry-run        ingest and build in dry-run, no git, no writes
-#   run.sh --no-sync        skip vdirsyncer, for when radicale is not up yet
-#   run.sh --verbose        every marker, every diagnostic, every changed line
+#   run.sh                     the real thing, as the timer calls it
+#   run.sh --dry-run --pull    the faithful preview: pull, then write nothing
+#   run.sh --dry-run           preview the checkout as it stands, without pulling
+#   run.sh --no-sync           skip vdirsyncer, for when radicale is not up yet
+#   run.sh --verbose           every marker, every diagnostic, every changed line
+#
+# --dry-run on its own does not pull, so it can report on notes older than the
+# ones you just pushed. It fetches and says how far behind it is; --pull makes the
+# preview faithful.
 #
 # Order is the whole game. **Ingest before reconcile** - backwards, and anything
 # the phone did gets deleted as an orphan on the very first run.
@@ -49,13 +54,15 @@ PUSH_ATTEMPTS="${PUSH_ATTEMPTS:-3}"
 DRY_RUN=
 NO_SYNC=
 VERBOSE=
+PULL=
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --no-sync) NO_SYNC=1 ;;
     --verbose) VERBOSE=1 ;;
-    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --pull) PULL=1 ;;
+    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "run.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -110,9 +117,7 @@ sync_now() {
 # ---------------------------------------------------------------- 1  git pull
 
 step "1  pull the notes"
-if [ -n "$DRY_RUN" ]; then
-  log "skipping git pull (--dry-run)"
-else
+if [ -z "$DRY_RUN" ] || [ -n "$PULL" ]; then
   # --autostash because the previous run may have left the tree dirty if it died
   # between writing markdown and committing. Without it the pull refuses and the
   # ratchet is stuck for ever.
@@ -122,6 +127,24 @@ else
   # anything else means somebody has been editing the checkout on the server.
   if [ -d "$MDICAL/.git" ]; then
     git -C "$MDICAL" pull --ff-only || warn "could not fast-forward mdical - running the checkout as it stands"
+  fi
+else
+  # A dry run that quietly reads a stale checkout is worse than no dry run at all:
+  # it reports confidently on notes that are not your notes, and the first version
+  # of this did exactly that - "nothing picked up" for markers that had been
+  # committed minutes earlier. Fetching is read-only, so at least say how far
+  # behind the checkout is.
+  log "not pulling (--dry-run) - fetching to see how current the checkout is"
+  if git -C "$VAULT_REPO" fetch --quiet 2>/dev/null; then
+    behind="$(git -C "$VAULT_REPO" rev-list --count 'HEAD..@{upstream}' 2>/dev/null || echo 0)"
+    if [ "$behind" -gt 0 ]; then
+      warn "the checkout is $behind commit(s) behind the remote, so this dry run is reading stale notes"
+      warn "re-run with --pull for a faithful preview, or without --dry-run to do it for real"
+    else
+      log "up to date with the remote"
+    fi
+  else
+    log "could not fetch - reporting on the checkout exactly as it stands"
   fi
 fi
 
@@ -212,6 +235,9 @@ sync_now || die "vdirsyncer failed on the way out - the vdir is correct, the ser
 
 step "8  done"
 if [ -n "$degraded" ]; then
+  if [ -n "$DRY_RUN" ]; then
+    die "dry run finished with warnings - see above"
+  fi
   die "finished with warnings - deliberately not pinging the healthcheck"
 fi
 if [ -n "$HEALTHCHECK" ] && [ -z "$DRY_RUN" ]; then

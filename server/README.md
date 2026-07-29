@@ -117,16 +117,24 @@ is the way to see the ratchet advance a date rather than close a task.
 ## 6. the first run
 
 ```
-sudo -H -u cal /opt/cal/mdical/server/run.sh --dry-run --verbose
+sudo -H -u cal /opt/cal/mdical/server/run.sh --dry-run --pull --verbose
 sudo -H -u cal /opt/cal/mdical/server/run.sh --verbose
 ```
 
-The dry run does the two reads and no writes: no git, no vdirsyncer, and both
-binaries in `--dry-run`. It is the cheap way to find out that the vault clone or
-the scope tags are wrong before anything is published. Check the marker count in
-its output before going further - `emitting 0 tasks and 0 events` means the scan
-found nothing, and the usual cause is `VAULT` pointing at the repo root or at the
-wrong subdirectory.
+**`--pull` matters.** `--dry-run` on its own deliberately does not touch git, which
+means it reports on the checkout as it stands - and if you have just committed
+markers on the laptop, that is not what you think it is. It fetches and tells you
+how many commits behind it is, but `--pull` is what makes the preview faithful.
+
+Other than that the dry run does the two reads and no writes: no vdirsyncer, and
+both binaries in `--dry-run`. It is the cheap way to find out the vault path or the
+scope tags are wrong before anything is published.
+
+Check the marker count before going further. `emitting 0 tasks and 0 events` means
+the scan found nothing, and in order of likelihood the cause is: the checkout is
+behind (use `--pull`), `VAULT` points at the repo root or the wrong subdirectory, or
+the notes are excluded by a scope tag. `--verbose` lists every marker it found and
+which file and line it came from, which distinguishes these immediately.
 
 `--no-sync` skips vdirsyncer, for when you want to test the build alone.
 
